@@ -85,7 +85,9 @@
     .speedup { margin-left: auto; font-size: 13px; font-weight: 700; }
 
     .table-outer { flex: 1; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
-    .table-head { display: grid; background: var(--surface2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .table-head { display: grid; background: var(--surface2); border-bottom: 1px solid var(--border); flex-shrink: 0; overflow-y: scroll; scrollbar-gutter: stable; }
+    .table-head::-webkit-scrollbar { width: 6px; }
+    .table-head::-webkit-scrollbar-thumb { background: transparent; }
     .th { padding: 0 12px; height: 34px; display: flex; align-items: center; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); border-right: 1px solid var(--border); }
     .th:last-child { border-right: none; }
 

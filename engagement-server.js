@@ -64,18 +64,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_del_staff   ON deliverables(primary_staff_id);
   CREATE INDEX IF NOT EXISTS idx_del_due     ON deliverables(due_date);
   CREATE INDEX IF NOT EXISTS idx_del_msd     ON deliverables(milestone_start_date);
+  CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 `)
 
 // ── Seed ──────────────────────────────────────────────────────────
 function seed() {
-  const existing = db.prepare('SELECT COUNT(*) as c FROM clients').get()
-  if (existing.c > 0) {
+  // v3: dates vary per entity so rollup sort visibly reorders groups
+  const seedVer = db.prepare("SELECT value FROM meta WHERE key='seed_version'").get()
+  if (seedVer?.value === 'v3') {
     const total = db.prepare('SELECT COUNT(*) as c FROM deliverables').get().c
     console.log(`Database ready — ${total.toLocaleString()} deliverables`)
     return
   }
-
-  console.log('Seeding database (v2 schema — 100,000 deliverables)…')
+  const clearMsg = seedVer ? `Reseeding (was ${seedVer.value} → v3)` : 'Seeding database (v3)'
+  console.log(`${clearMsg} — 100,000 deliverables with varied date distribution…`)
+  db.exec('DELETE FROM deliverables; DELETE FROM entities; DELETE FROM clients; DELETE FROM service_lines; DELETE FROM staff')
 
   // ── Reference data ──────────────────────────────────────────────
   const slNames = [
@@ -159,9 +162,15 @@ function seed() {
         const eId = re.lastInsertRowid
 
         for (let d = 0; d < DELS_PER_ENTITY && delCount < TARGET; d++) {
-          const mo  = String((d % 12) + 1).padStart(2, '0')
-          const dy  = String((d * 3 % 28) + 1).padStart(2, '0')
-          const msd = String(((d * 5) % 28) + 1).padStart(2, '0')
+          // Each client lands in a distinct month band (Jan–Dec cycling every 12 clients).
+          // Each entity within a client is staggered by 2 days so entity-level sort
+          // visibly reorders rows. Milestone date is a few days before due date.
+          const clientBand   = c % 12                         // 0–11 → month 1–12
+          const entityDayBase= e * 2                          // 0,2,4…18 per entity
+          const dueDayNum    = (entityDayBase + d % 10) % 28 + 1
+          const mo  = String(clientBand + 1).padStart(2, '0')
+          const dy  = String(dueDayNum).padStart(2, '0')
+          const msd = String(Math.max(1, dueDayNum - (e % 5 + 1))).padStart(2, '0')
           const primaryStaff = rand(STAFF_COUNT) + 1
           let reviewer = rand(STAFF_COUNT) + 1
           if (reviewer === primaryStaff) reviewer = (reviewer % STAFF_COUNT) + 1
@@ -187,6 +196,7 @@ function seed() {
     }
   })()
 
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('seed_version', 'v3')").run()
   console.log(`Seeded: ${delCount.toLocaleString()} deliverables · ${CLIENTS} clients · ${CLIENTS * ENTITIES_PER_CLI} entities`)
   console.log(`Reference: ${SL_COUNT} service lines · ${STAFF_COUNT} staff`)
 }

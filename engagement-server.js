@@ -62,6 +62,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_del_client  ON deliverables(client_id);
   CREATE INDEX IF NOT EXISTS idx_del_sl      ON deliverables(service_line_id);
   CREATE INDEX IF NOT EXISTS idx_del_staff   ON deliverables(primary_staff_id);
+  CREATE INDEX IF NOT EXISTS idx_del_due     ON deliverables(due_date);
 `)
 
 // ── Seed ──────────────────────────────────────────────────────────
@@ -229,7 +230,7 @@ app.get('/api/waterfall-stream', async (req, res) => {
   // Phase 3 — deliverables (1 query per entity, batched at CONCURRENCY)
   const delivBatches = Math.ceil(entities.length / CONCURRENCY)
   await sleep(delivBatches * DEMO_CALL_MS)
-  const deliverables = flatQuery.all()
+  const deliverables = buildFlatQuery().all()
   qCount += entities.length
   const prodEquivalentMs = (entityBatches + delivBatches) * 2000
   send({ type: 'deliverables', data: deliverables, queryCount: qCount, delivBatches, concurrency: CONCURRENCY, prodEquivalentMs, totalTime: Date.now() - start })
@@ -270,8 +271,20 @@ app.get('/api/waterfall', async (req, res) => {
   res.json({ queryCount, totalTime: Date.now() - start, rowCount: 100000, prodEquivalentMs })
 })
 
-// ── API: Flat query (1 query, 5 JOINs) ───────────────────────────
-const flatQuery = db.prepare(`
+// ── Flat query builder (dynamic ORDER BY) ────────────────────────
+// Prepared statements can't vary ORDER BY, so we build on demand.
+// SQLite prepares in <1ms so this is fine per-request.
+const SORT_COLS = {
+  due_date:     'd.due_date',
+  client_name:  'c.name',
+  service_line: 'sl.name',
+  assigned_to:  'ps.name',
+  period:       'd.period',
+  type:         'd.type',
+  complexity:   'd.complexity',
+  status:       'd.status',
+}
+const FLAT_SELECT = `
   SELECT
     d.id,                    d.type,              d.period,
     d.status,                d.due_date,          d.milestone_start_date,
@@ -288,12 +301,18 @@ const flatQuery = db.prepare(`
   JOIN service_lines sl ON d.service_line_id  = sl.id
   JOIN staff         ps ON d.primary_staff_id = ps.id
   JOIN staff         rv ON d.reviewer_id      = rv.id
-  ORDER BY c.name, e.name, d.type
-`)
+`
+function buildFlatQuery(sort, dir) {
+  const col    = SORT_COLS[sort]
+  const dirSql = dir === 'desc' ? 'DESC' : 'ASC'
+  // Default: group-friendly sort. Custom: global sort + id tiebreaker for stability.
+  const order  = col ? `${col} ${dirSql}, d.id` : 'c.name, e.name, d.type'
+  return db.prepare(FLAT_SELECT + ` ORDER BY ${order}`)
+}
 
 app.get('/api/flat', (req, res) => {
   const start = Date.now()
-  const data = flatQuery.all()
+  const data  = buildFlatQuery(req.query.sort, req.query.dir).all()
   res.json({ queryCount: 1, totalTime: Date.now() - start, rowCount: data.length, data })
 })
 
@@ -309,8 +328,9 @@ app.get('/api/flat-stream', (req, res) => {
 
   const start = Date.now()
   let rowCount = 0, batch = []
+  const stmt = buildFlatQuery(req.query.sort, req.query.dir)
 
-  for (const row of flatQuery.iterate()) {
+  for (const row of stmt.iterate()) {
     batch.push(row)
     rowCount++
     if (batch.length >= STREAM_BATCH) {

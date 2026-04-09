@@ -293,6 +293,8 @@ let groupMode = 'both'
 let activeStatuses = new Set(), activeRegion = '', activeServiceLine = '', activeComplexity = ''
 let waterfallPartial = false
 let wfTime = null, flatTime = null, wfProdMs = null
+let sortCol = null, sortDir = 'asc'   // null = default DB order
+let flatEs = null                      // current flat EventSource
 
 // ── Waterfall: streaming via SSE ───────────────────────────────────
 function runWaterfall() {
@@ -384,6 +386,8 @@ function waterfallLoadEntities(entities) {
 
 // ── Flat load (streaming SSE — same 1 query, rows arrive in batches)
 function loadFlat() {
+  if (flatEs) { flatEs.close(); flatEs = null }   // cancel any in-flight stream
+
   const btn = document.getElementById('flatBtn')
   btn.disabled = true; btn.textContent = 'Loading…'
   document.getElementById('flatT').textContent = '…'; document.getElementById('flatT').className = 'stat-val'
@@ -391,7 +395,8 @@ function loadFlat() {
   document.getElementById('flatV').textContent = 'Streaming rows…'; document.getElementById('flatV').className = 'verdict'
 
   let allRows = []
-  const es = new EventSource('/api/flat-stream')
+  const params = sortCol ? `?sort=${sortCol}&dir=${sortDir}` : ''
+  const es = flatEs = new EventSource('/api/flat-stream' + params)
 
   es.onmessage = e => {
     const msg = JSON.parse(e.data)
@@ -412,12 +417,13 @@ function loadFlat() {
       document.getElementById('flatR').textContent = allRows.length.toLocaleString(); document.getElementById('flatR').className = 'stat-val good'
       document.getElementById('flatV').textContent = `DB: ${msg.totalTime}ms · ${allRows.length.toLocaleString()} rows · 1 query · streamed`
       document.getElementById('flatV').className = 'verdict good'
+      flatEs = null
       btn.disabled = false; btn.textContent = '② Reload'
       updateSpeedup(); es.close()
     }
   }
 
-  es.onerror = () => { btn.disabled = false; btn.textContent = '② Reload'; es.close() }
+  es.onerror = () => { flatEs = null; btn.disabled = false; btn.textContent = '② Reload'; es.close() }
 }
 
 function updateSpeedup() {
@@ -633,12 +639,22 @@ function renderDel({ d, mode }) {
 // ── Column headers ─────────────────────────────────────────────────
 function updateHeaders() {
   const head = document.getElementById('tableHead')
+  const si = col => {
+    const active = sortCol === col
+    const arrow = active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
+    const style = active ? 'color:var(--text);cursor:pointer' : 'cursor:pointer'
+    return { arrow, style }
+  }
+  const sh = (col, label) => {
+    const { arrow, style } = si(col)
+    return `<div class="th" style="${style}" onclick="setSort('${col}')">${label}${arrow}</div>`
+  }
   if (groupMode === 'none') {
     head.style.gridTemplateColumns = COL_FLAT
-    head.innerHTML = `<div class="th">Deliverable</div><div class="th">Service Line</div><div class="th">Period</div><div class="th">Complexity</div><div class="th">Status</div><div class="th">E-File</div><div class="th">Due Date</div><div class="th">Assigned To</div>`
+    head.innerHTML = sh('type','Deliverable') + sh('service_line','Service Line') + sh('period','Period') + sh('complexity','Complexity') + sh('status','Status') + `<div class="th">E-File</div>` + sh('due_date','Due Date') + sh('assigned_to','Assigned To')
   } else {
     head.style.gridTemplateColumns = COL_TREE
-    head.innerHTML = `<div class="th"></div><div class="th">Name</div><div class="th">Type / Detail</div><div class="th">Service Line</div><div class="th">Period</div><div class="th">Complexity</div><div class="th">Status</div><div class="th">E-File</div><div class="th">Due Date</div><div class="th">Assigned To</div>`
+    head.innerHTML = `<div class="th"></div><div class="th">Name</div>` + sh('type','Type / Detail') + sh('service_line','Service Line') + sh('period','Period') + sh('complexity','Complexity') + sh('status','Status') + `<div class="th">E-File</div>` + sh('due_date','Due Date') + sh('assigned_to','Assigned To')
   }
 }
 
@@ -675,6 +691,12 @@ function toggleStatus(s) {
     document.querySelector('.pill-all').classList.toggle('active', activeStatuses.size === 0)
   }
   rebuildAndRender()
+}
+
+function setSort(col) {
+  if (sortCol === col) sortDir = sortDir === 'asc' ? 'desc' : 'asc'
+  else { sortCol = col; sortDir = 'asc' }
+  loadFlat()
 }
 
 function setRegion(val)       { activeRegion      = val; rebuildAndRender() }

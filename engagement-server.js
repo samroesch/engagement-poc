@@ -63,6 +63,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_del_sl      ON deliverables(service_line_id);
   CREATE INDEX IF NOT EXISTS idx_del_staff   ON deliverables(primary_staff_id);
   CREATE INDEX IF NOT EXISTS idx_del_due     ON deliverables(due_date);
+  CREATE INDEX IF NOT EXISTS idx_del_msd     ON deliverables(milestone_start_date);
 `)
 
 // ── Seed ──────────────────────────────────────────────────────────
@@ -275,14 +276,15 @@ app.get('/api/waterfall', async (req, res) => {
 // Prepared statements can't vary ORDER BY, so we build on demand.
 // SQLite prepares in <1ms so this is fine per-request.
 const SORT_COLS = {
-  due_date:     'd.due_date',
-  client_name:  'c.name',
-  service_line: 'sl.name',
-  assigned_to:  'ps.name',
-  period:       'd.period',
-  type:         'd.type',
-  complexity:   'd.complexity',
-  status:       'd.status',
+  due_date:             'd.due_date',
+  milestone_start_date: 'd.milestone_start_date',
+  client_name:          'c.name',
+  service_line:         'sl.name',
+  assigned_to:          'ps.name',
+  period:               'd.period',
+  type:                 'd.type',
+  complexity:           'd.complexity',
+  status:               'd.status',
 }
 const FLAT_SELECT = `
   SELECT

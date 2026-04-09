@@ -282,9 +282,9 @@ const ROW_H = 42, OVERSCAN = 8, CONCURRENCY = 6
 const SL = { not_started: 'Not Started', in_progress: 'In Progress', review: 'In Review', filed: 'Filed', complete: 'Complete' }
 const CX = { low: ['Low','cx-low'], medium: ['Med','cx-med'], high: ['High','cx-high'], critical: ['Crit','cx-crit'] }
 const EF = { not_applicable: ['N/A','ef-na'], not_filed: ['Not Filed','ef-nf'], pending: ['Pending','ef-pend'], accepted: ['Accepted','ef-acc'], rejected: ['Rejected','ef-rej'] }
-// columns: chevron | name | service_line | period | complexity | status | e_file | due_date | assigned
-const COL_TREE = '28px 1fr 110px 90px 82px 100px 82px 100px 120px'
-const COL_FLAT = '1fr 110px 90px 82px 100px 82px 100px 120px'
+// columns: chevron | name | service_line | period | complexity | status | e_file | mst_date | due_date | assigned
+const COL_TREE = '28px 1fr 110px 90px 82px 100px 82px 90px 100px 120px'
+const COL_FLAT = '1fr 110px 90px 82px 100px 82px 90px 100px 120px'
 
 // ── State ──────────────────────────────────────────────────────────
 let treeClients = [], deliverableMap = new Map(), allRegions = [], allServiceLines = []
@@ -511,13 +511,14 @@ function getFiltered() {
 
 // ── Build visible rows (all modes + filters) ───────────────────────
 const SORT_KEYS = {
-  due_date:     d => d.due_date     || '',
-  service_line: d => d.service_line || '',
-  assigned_to:  d => d.assigned_to  || '',
-  period:       d => d.period       || '',
-  type:         d => d.type         || '',
-  complexity:   d => d.complexity   || '',
-  status:       d => d.status       || '',
+  due_date:             d => d.due_date             || '',
+  milestone_start_date: d => d.milestone_start_date || '',
+  service_line:         d => d.service_line         || '',
+  assigned_to:          d => d.assigned_to          || '',
+  period:               d => d.period               || '',
+  type:                 d => d.type                 || '',
+  complexity:           d => d.complexity           || '',
+  status:               d => d.status               || '',
 }
 function getSorted(dels) {
   const key = sortCol && SORT_KEYS[sortCol]
@@ -525,50 +526,123 @@ function getSorted(dels) {
   const mul = sortDir === 'desc' ? -1 : 1
   return [...dels].sort((a, b) => {
     const av = key(a), bv = key(b)
+    if (!av && !bv) return 0
+    if (!av) return 1
+    if (!bv) return -1
     return av < bv ? -mul : av > bv ? mul : 0
   })
 }
 
+// Computes rollup values for tree-mode sort.
+// ASC → min() rollup: groups with earliest dates surface first (most urgent).
+// DESC → max() rollup: groups with latest dates surface first (most recent activity).
+function getTreeRollup(dels) {
+  const key = sortCol && SORT_KEYS[sortCol]
+  if (!key) return null
+  const isAsc = sortDir !== 'desc'
+  const mul = isAsc ? 1 : -1
+  const better = isAsc
+    ? (challenger, current) => challenger < current
+    : (challenger, current) => challenger > current
+
+  // Per-deliverable sort (nulls last regardless of direction)
+  const cmp = (a, b) => {
+    const av = key(a), bv = key(b)
+    if (!av && !bv) return 0
+    if (!av) return 1
+    if (!bv) return -1
+    return av < bv ? -mul : av > bv ? mul : 0
+  }
+
+  const entityRollup = new Map()  // entityId → rollup value
+  const clientRollup = new Map()  // clientId → rollup value
+  const entityDels   = new Map()  // entityId → sorted del array
+
+  for (const d of dels) {
+    const val = key(d)
+    if (val) {
+      const cur = entityRollup.get(d.entityId)
+      if (cur === undefined || better(val, cur)) entityRollup.set(d.entityId, val)
+    }
+    if (!entityDels.has(d.entityId)) entityDels.set(d.entityId, [])
+    entityDels.get(d.entityId).push(d)
+  }
+  for (const [eid, arr] of entityDels) {
+    arr.sort(cmp)
+    const val = entityRollup.get(eid)
+    if (val !== undefined) {
+      const cid = arr[0].clientId
+      const cur = clientRollup.get(cid)
+      if (cur === undefined || better(val, cur)) clientRollup.set(cid, val)
+    }
+  }
+
+  const entCmp = (a, b) => {
+    const av = entityRollup.get(a.id), bv = entityRollup.get(b.id)
+    if (!av && !bv) return 0; if (!av) return 1; if (!bv) return -1
+    return av < bv ? -mul : av > bv ? mul : 0
+  }
+  const cliCmp = (a, b) => {
+    const av = clientRollup.get(a.id), bv = clientRollup.get(b.id)
+    if (!av && !bv) return 0; if (!av) return 1; if (!bv) return -1
+    return av < bv ? -mul : av > bv ? mul : 0
+  }
+
+  return { entityRollup, clientRollup, entityDels, mul, cmp, entCmp, cliCmp }
+}
+
 function buildVisibleRows() {
   visibleRows = []
-  const dels = getSorted(getFiltered())
+  const dels = getFiltered()
   if (!dels.length) return
 
   if (groupMode === 'none') {
-    for (const d of dels) visibleRows.push({ kind: 'del', d, mode: 'flat' })
+    for (const d of getSorted(dels)) visibleRows.push({ kind: 'del', d, mode: 'flat' })
     return
   }
 
+  const R = getTreeRollup(dels)
+
   if (groupMode === 'entity') {
-    const byEnt = new Map()
-    for (const d of dels) { if (!byEnt.has(d.entityId)) byEnt.set(d.entityId, []); byEnt.get(d.entityId).push(d) }
-    for (const c of treeClients)
-      for (const e of c.entities) {
-        const ed = byEnt.get(e.id); if (!ed?.length) continue
-        visibleRows.push({ kind: 'entity', e, c, count: ed.length })
-        if (!expandedEntities.has(e.id)) continue
-        for (const d of ed) visibleRows.push({ kind: 'del', d, mode: 'entity' })
-      }
+    const byEnt = R ? R.entityDels : (() => {
+      const m = new Map()
+      for (const d of dels) { if (!m.has(d.entityId)) m.set(d.entityId, []); m.get(d.entityId).push(d) }
+      return m
+    })()
+    const clientById = new Map(treeClients.map(c => [c.id, c]))
+    const allEnts = treeClients.flatMap(c => c.entities)
+    if (R) allEnts.sort(R.entCmp)
+    for (const e of allEnts) {
+      const ed = byEnt.get(e.id); if (!ed?.length) continue
+      const c = clientById.get(e.clientId)
+      visibleRows.push({ kind: 'entity', e, c, count: ed.length })
+      if (!expandedEntities.has(e.id)) continue
+      for (const d of ed) visibleRows.push({ kind: 'del', d, mode: 'entity' })
+    }
     return
   }
 
   const byClient = new Map()
   for (const d of dels) { if (!byClient.has(d.clientId)) byClient.set(d.clientId, []); byClient.get(d.clientId).push(d) }
-  for (const c of treeClients) {
+  const orderedClients = R ? [...treeClients].sort(R.cliCmp) : treeClients
+  for (const c of orderedClients) {
     const cd = byClient.get(c.id); if (!cd?.length) continue
     visibleRows.push({ kind: 'client', c, count: cd.length })
     if (!expandedClients.has(c.id)) continue
     if (groupMode === 'both') {
       const byEnt = new Map()
       for (const d of cd) { if (!byEnt.has(d.entityId)) byEnt.set(d.entityId, []); byEnt.get(d.entityId).push(d) }
-      for (const e of c.entities) {
-        const ed = byEnt.get(e.id); if (!ed?.length) continue
+      const orderedEnts = R ? [...c.entities].sort(R.entCmp) : c.entities
+      for (const e of orderedEnts) {
+        const ed = R ? R.entityDels.get(e.id) : byEnt.get(e.id)
+        if (!ed?.length) continue
         visibleRows.push({ kind: 'entity', e, c, count: ed.length })
         if (!expandedEntities.has(e.id)) continue
         for (const d of ed) visibleRows.push({ kind: 'del', d, mode: 'both' })
       }
     } else {
-      for (const d of cd) visibleRows.push({ kind: 'del', d, mode: 'client' })
+      const clientDels = R ? [...cd].sort(R.cmp) : cd
+      for (const d of clientDels) visibleRows.push({ kind: 'del', d, mode: 'client' })
     }
   }
 }
@@ -604,7 +678,7 @@ function renderClient({ c, count }) {
     <div class="cell"><strong>${x(c.name)}</strong><span class="cell-sub">${x(c.industry)} · ${x(c.region)}</span></div>
     <div class="cell cell-txt">${count} dels · ${c.entities.length} ents</div>
     <div class="cell"></div><div class="cell"></div><div class="cell"></div>
-    <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+    <div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
   </div>`
 }
 
@@ -617,7 +691,7 @@ function renderEntity({ e, c, count }) {
     <div class="cell" style="padding-left:${indent}px"><span style="overflow:hidden;text-overflow:ellipsis">${x(e.name)}${sub}</span></div>
     <div class="cell cell-txt">${x(e.entity_type)} · ${count} dels</div>
     <div class="cell"></div><div class="cell"></div><div class="cell"></div>
-    <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+    <div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
   </div>`
 }
 
@@ -638,6 +712,7 @@ function renderDel({ d, mode }) {
     <div class="cell"><span class="badge ${cx[1]}">${cx[0]}</span></div>
     <div class="cell"><span class="badge s-${d.status}">${SL[d.status]}</span></div>
     <div class="cell"><span class="badge ${ef[1]}">${ef[0]}</span></div>
+    <div class="cell cell-txt">${x(d.milestone_start_date)}</div>
     <div class="cell cell-txt">${x(d.due_date)}</div>
     <div class="cell cell-txt">${x(d.assigned_to)}</div>
   </div>`
@@ -650,6 +725,7 @@ function renderDel({ d, mode }) {
     <div class="cell"><span class="badge ${cx[1]}">${cx[0]}</span></div>
     <div class="cell"><span class="badge s-${d.status}">${SL[d.status]}</span></div>
     <div class="cell"><span class="badge ${ef[1]}">${ef[0]}</span></div>
+    <div class="cell cell-txt">${x(d.milestone_start_date)}</div>
     <div class="cell cell-txt">${x(d.due_date)}</div>
     <div class="cell cell-txt">${x(d.assigned_to)}</div>
   </div>`
@@ -670,10 +746,10 @@ function updateHeaders() {
   }
   if (groupMode === 'none') {
     head.style.gridTemplateColumns = COL_FLAT
-    head.innerHTML = sh('type','Deliverable') + sh('service_line','Service Line') + sh('period','Period') + sh('complexity','Complexity') + sh('status','Status') + `<div class="th">E-File</div>` + sh('due_date','Due Date') + sh('assigned_to','Assigned To')
+    head.innerHTML = sh('type','Deliverable') + sh('service_line','Service Line') + sh('period','Period') + sh('complexity','Complexity') + sh('status','Status') + `<div class="th">E-File</div>` + sh('milestone_start_date','Mst. Date') + sh('due_date','Due Date') + sh('assigned_to','Assigned To')
   } else {
     head.style.gridTemplateColumns = COL_TREE
-    head.innerHTML = `<div class="th"></div><div class="th">Name</div>` + sh('service_line','Service Line') + sh('period','Period') + sh('complexity','Complexity') + sh('status','Status') + `<div class="th">E-File</div>` + sh('due_date','Due Date') + sh('assigned_to','Assigned To')
+    head.innerHTML = `<div class="th"></div><div class="th">Name</div>` + sh('service_line','Service Line') + sh('period','Period') + sh('complexity','Complexity') + sh('status','Status') + `<div class="th">E-File</div>` + sh('milestone_start_date','Mst. Date') + sh('due_date','Due Date') + sh('assigned_to','Assigned To')
   }
 }
 

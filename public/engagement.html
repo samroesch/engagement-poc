@@ -89,7 +89,7 @@
     .th { padding: 0 12px; height: 34px; display: flex; align-items: center; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); border-right: 1px solid var(--border); }
     .th:last-child { border-right: none; }
 
-    .table-viewport { flex: 1; overflow-y: auto; position: relative; min-height: 0; }
+    .table-viewport { flex: 1; overflow-y: auto; scrollbar-gutter: stable; position: relative; min-height: 0; }
     .table-viewport::-webkit-scrollbar { width: 6px; }
     .table-viewport::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     .row-spacer   { width: 100%; pointer-events: none; }
@@ -508,9 +508,28 @@ function getFiltered() {
 }
 
 // ── Build visible rows (all modes + filters) ───────────────────────
+const SORT_KEYS = {
+  due_date:     d => d.due_date     || '',
+  service_line: d => d.service_line || '',
+  assigned_to:  d => d.assigned_to  || '',
+  period:       d => d.period       || '',
+  type:         d => d.type         || '',
+  complexity:   d => d.complexity   || '',
+  status:       d => d.status       || '',
+}
+function getSorted(dels) {
+  const key = sortCol && SORT_KEYS[sortCol]
+  if (!key) return dels
+  const mul = sortDir === 'desc' ? -1 : 1
+  return [...dels].sort((a, b) => {
+    const av = key(a), bv = key(b)
+    return av < bv ? -mul : av > bv ? mul : 0
+  })
+}
+
 function buildVisibleRows() {
   visibleRows = []
-  const dels = getFiltered()
+  const dels = getSorted(getFiltered())
   if (!dels.length) return
 
   if (groupMode === 'none') {
@@ -694,7 +713,8 @@ function toggleStatus(s) {
 function setSort(col) {
   if (sortCol === col) sortDir = sortDir === 'asc' ? 'desc' : 'asc'
   else { sortCol = col; sortDir = 'asc' }
-  loadFlat()
+  if (groupMode === 'none') loadFlat()
+  else rebuildAndRender()
 }
 
 function setRegion(val)       { activeRegion      = val; rebuildAndRender() }

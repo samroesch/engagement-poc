@@ -280,9 +280,9 @@ const ROW_H = 42, OVERSCAN = 8, CONCURRENCY = 6
 const SL = { not_started: 'Not Started', in_progress: 'In Progress', review: 'In Review', filed: 'Filed', complete: 'Complete' }
 const CX = { low: ['Low','cx-low'], medium: ['Med','cx-med'], high: ['High','cx-high'], critical: ['Crit','cx-crit'] }
 const EF = { not_applicable: ['N/A','ef-na'], not_filed: ['Not Filed','ef-nf'], pending: ['Pending','ef-pend'], accepted: ['Accepted','ef-acc'], rejected: ['Rejected','ef-rej'] }
-// columns: chevron | name | type | service_line | period | complexity | status | e_file | due_date | assigned
-const COL_TREE = '28px 1fr 120px 110px 90px 82px 100px 82px 100px 120px'
-const COL_FLAT = '1fr 120px 110px 90px 82px 100px 82px 100px 120px'
+// columns: chevron | name | service_line | period | complexity | status | e_file | due_date | assigned
+const COL_TREE = '28px 1fr 110px 90px 82px 100px 82px 100px 120px'
+const COL_FLAT = '1fr 110px 90px 82px 100px 82px 100px 120px'
 
 // ── State ──────────────────────────────────────────────────────────
 let treeClients = [], deliverableMap = new Map(), allRegions = [], allServiceLines = []
@@ -581,8 +581,7 @@ function renderClient({ c, count }) {
   return `<div class="row r-client" style="grid-template-columns:${COL_TREE}" onclick="toggleClient(${c.id})">
     <div class="cell" style="justify-content:center"><span class="chev ${open?'open':''}">▶</span></div>
     <div class="cell"><strong>${x(c.name)}</strong><span class="cell-sub">${x(c.industry)} · ${x(c.region)}</span></div>
-    <div class="cell cell-txt">${count} deliverables</div>
-    <div class="cell cell-txt">${c.entities.length} entities</div>
+    <div class="cell cell-txt">${count} dels · ${c.entities.length} ents</div>
     <div class="cell"></div><div class="cell"></div><div class="cell"></div>
     <div class="cell"></div><div class="cell"></div><div class="cell"></div>
   </div>`
@@ -595,8 +594,7 @@ function renderEntity({ e, c, count }) {
   return `<div class="row r-entity" style="grid-template-columns:${COL_TREE}" onclick="toggleEntity(${e.id})">
     <div class="cell" style="justify-content:center"><span class="chev ${open?'open':''}">▶</span></div>
     <div class="cell" style="padding-left:${indent}px"><span style="overflow:hidden;text-overflow:ellipsis">${x(e.name)}${sub}</span></div>
-    <div class="cell cell-txt">${x(e.entity_type)}</div>
-    <div class="cell cell-txt">${count} deliverables</div>
+    <div class="cell cell-txt">${x(e.entity_type)} · ${count} dels</div>
     <div class="cell"></div><div class="cell"></div><div class="cell"></div>
     <div class="cell"></div><div class="cell"></div><div class="cell"></div>
   </div>`
@@ -654,7 +652,7 @@ function updateHeaders() {
     head.innerHTML = sh('type','Deliverable') + sh('service_line','Service Line') + sh('period','Period') + sh('complexity','Complexity') + sh('status','Status') + `<div class="th">E-File</div>` + sh('due_date','Due Date') + sh('assigned_to','Assigned To')
   } else {
     head.style.gridTemplateColumns = COL_TREE
-    head.innerHTML = `<div class="th"></div><div class="th">Name</div>` + sh('type','Type / Detail') + sh('service_line','Service Line') + sh('period','Period') + sh('complexity','Complexity') + sh('status','Status') + `<div class="th">E-File</div>` + sh('due_date','Due Date') + sh('assigned_to','Assigned To')
+    head.innerHTML = `<div class="th"></div><div class="th">Name</div>` + sh('service_line','Service Line') + sh('period','Period') + sh('complexity','Complexity') + sh('status','Status') + `<div class="th">E-File</div>` + sh('due_date','Due Date') + sh('assigned_to','Assigned To')
   }
 }
 

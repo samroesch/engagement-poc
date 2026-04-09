@@ -382,24 +382,42 @@ function waterfallLoadEntities(entities) {
   renderRows()
 }
 
-// ── Flat load ──────────────────────────────────────────────────────
-async function loadFlat() {
+// ── Flat load (streaming SSE — same 1 query, rows arrive in batches)
+function loadFlat() {
   const btn = document.getElementById('flatBtn')
   btn.disabled = true; btn.textContent = 'Loading…'
-  const res = await fetch('/api/flat'), d = await res.json()
-  flatTime = d.totalTime
-  document.getElementById('flatT').textContent = d.totalTime+'ms'; document.getElementById('flatT').className = 'stat-val good'
-  document.getElementById('flatR').textContent = d.rowCount.toLocaleString(); document.getElementById('flatR').className = 'stat-val good'
-  document.getElementById('flatV').textContent = `DB: ${d.totalTime}ms · ${d.rowCount.toLocaleString()} rows · 1 query`
-  document.getElementById('flatV').className = 'verdict good'
-  buildTree(d.data)
-  expandAll()
-  populateRegionFilter()
-  rebuildAndRender()
-  document.getElementById('liveFeed').style.display = 'block'
-  document.getElementById('expandBtn').style.display = ''
-  btn.disabled = false; btn.textContent = '② Reload'
-  updateSpeedup()
+  document.getElementById('flatT').textContent = '…'; document.getElementById('flatT').className = 'stat-val'
+  document.getElementById('flatR').textContent = '…'; document.getElementById('flatR').className = 'stat-val'
+  document.getElementById('flatV').textContent = 'Streaming rows…'; document.getElementById('flatV').className = 'verdict'
+
+  let allRows = []
+  const es = new EventSource('/api/flat-stream')
+
+  es.onmessage = e => {
+    const msg = JSON.parse(e.data)
+    allRows = allRows.concat(msg.rows)
+    document.getElementById('flatR').textContent = allRows.length.toLocaleString()
+
+    // Render after first batch so table populates immediately
+    buildTree(allRows)
+    expandAll()
+    populateRegionFilter()
+    rebuildAndRender()
+    document.getElementById('liveFeed').style.display = 'block'
+    document.getElementById('expandBtn').style.display = ''
+
+    if (msg.done) {
+      flatTime = msg.totalTime
+      document.getElementById('flatT').textContent = msg.totalTime + 'ms'; document.getElementById('flatT').className = 'stat-val good'
+      document.getElementById('flatR').textContent = allRows.length.toLocaleString(); document.getElementById('flatR').className = 'stat-val good'
+      document.getElementById('flatV').textContent = `DB: ${msg.totalTime}ms · ${allRows.length.toLocaleString()} rows · 1 query · streamed`
+      document.getElementById('flatV').className = 'verdict good'
+      btn.disabled = false; btn.textContent = '② Reload'
+      updateSpeedup(); es.close()
+    }
+  }
+
+  es.onerror = () => { btn.disabled = false; btn.textContent = '② Reload'; es.close() }
 }
 
 function updateSpeedup() {

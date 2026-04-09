@@ -297,6 +297,32 @@ app.get('/api/flat', (req, res) => {
   res.json({ queryCount: 1, totalTime: Date.now() - start, rowCount: data.length, data })
 })
 
+// ── API: Flat stream (SSE — same 1 query, rows piped in batches) ──
+// DB cursor reads rows as they're ready; client renders first batch
+// in ~100ms instead of waiting for full 100k-row JSON transfer.
+const STREAM_BATCH = 5000
+app.get('/api/flat-stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders()
+
+  const start = Date.now()
+  let rowCount = 0, batch = []
+
+  for (const row of flatQuery.iterate()) {
+    batch.push(row)
+    rowCount++
+    if (batch.length >= STREAM_BATCH) {
+      res.write(`data: ${JSON.stringify({ rows: batch, rowCount })}\n\n`)
+      batch = []
+    }
+  }
+
+  res.write(`data: ${JSON.stringify({ rows: batch, rowCount, done: true, totalTime: Date.now() - start })}\n\n`)
+  res.end()
+})
+
 // ── WebSocket: push live status updates ───────────────────────────
 const STATUSES  = ['not_started', 'in_progress', 'review', 'filed', 'complete']
 const maxId     = db.prepare('SELECT MAX(id) as m FROM deliverables').get().m

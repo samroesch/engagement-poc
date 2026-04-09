@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Engagement Data — Architecture POC</title>
+  <style>
+    :root {
+      --bg: #0e0e11; --surface: #1a1a1f; --surface2: #222228; --border: #2e2e36;
+      --text: #e8e8ed; --muted: #6e6e7a;
+      --green: #32d74b; --amber: #ffd60a; --red: #ff453a; --blue: #4a9eff; --purple: #bf5af2;
+      --row-h: 42px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* Header */
+    .header { padding: 14px 24px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .header h1 { font-size: 17px; font-weight: 700; }
+    .header p  { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* Demo cards */
+    .demo-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px 24px; flex-shrink: 0; }
+    .demo-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+    .demo-card h2 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); margin-bottom: 8px; }
+    .demo-card.waterfall h2 { color: var(--red); }
+    .demo-card.flat h2 { color: var(--green); }
+    .stats { display: flex; gap: 18px; margin-bottom: 10px; }
+    .stat-val { font-size: 24px; font-weight: 700; letter-spacing: -1px; font-variant-numeric: tabular-nums; color: var(--muted); line-height: 1; }
+    .stat-val.bad { color: var(--red); } .stat-val.good { color: var(--green); }
+    .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+    .card-row { display: flex; align-items: center; gap: 10px; }
+    .verdict { font-size: 11px; color: var(--muted); margin-top: 6px; min-height: 14px; }
+    .verdict.good { color: var(--green); } .verdict.bad { color: var(--red); }
+
+    /* Waterfall phase lines */
+    .phases { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+    .phase-line { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .phase-line.loading { color: var(--amber); }
+    .phase-line.done    { color: var(--green); }
+
+    /* Buttons */
+    .btn { padding: 7px 14px; border-radius: 7px; font-size: 12px; font-weight: 600; border: none; cursor: pointer; transition: opacity 0.15s; white-space: nowrap; }
+    .btn:active { opacity: 0.7; } .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-red    { background: var(--red)22;    color: var(--red);    border: 1px solid var(--red)44; }
+    .btn-green  { background: var(--green)22;  color: var(--green);  border: 1px solid var(--green)44; }
+    .btn-subtle { background: var(--surface2); color: var(--muted);  border: 1px solid var(--border); }
+    .btn-subtle:hover { color: var(--text); border-color: var(--text)44; }
+
+    /* Filter bar */
+    .filter-bar { display: flex; align-items: center; gap: 10px; padding: 7px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .filter-group { display: flex; align-items: center; gap: 6px; }
+    .filter-label { font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+    .filter-divider { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
+
+    .seg-ctrl { display: flex; background: var(--surface2); border-radius: 7px; padding: 2px; border: 1px solid var(--border); }
+    .seg { padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 500; border: none; background: none; color: var(--muted); cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+    .seg.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px #0004; }
+
+    .status-pills { display: flex; gap: 3px; flex-wrap: wrap; }
+    .pill { padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; border: 1px solid transparent; cursor: pointer; transition: all 0.15s; opacity: 0.4; }
+    .pill.active { opacity: 1; }
+    .pill-all         { border-color: var(--border);     color: var(--text);   background: var(--surface2); opacity: 1; }
+    .pill-all.active  { border-color: var(--text)44; }
+    .pill-not_started { border-color: var(--muted)44;    color: var(--muted); }
+    .pill-not_started.active { background: var(--muted)22;   border-color: var(--muted); }
+    .pill-in_progress { border-color: var(--blue)44;     color: var(--blue); }
+    .pill-in_progress.active { background: var(--blue)22;    border-color: var(--blue); }
+    .pill-review      { border-color: var(--amber)44;    color: var(--amber); }
+    .pill-review.active      { background: var(--amber)22;   border-color: var(--amber); }
+    .pill-filed       { border-color: var(--purple)44;   color: var(--purple); }
+    .pill-filed.active       { background: var(--purple)22;  border-color: var(--purple); }
+    .pill-complete    { border-color: var(--green)44;    color: var(--green); }
+    .pill-complete.active    { background: var(--green)22;   border-color: var(--green); }
+
+    select { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 12px; font-family: inherit; padding: 4px 8px; outline: none; cursor: pointer; }
+
+    /* Table area */
+    .table-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 0 24px 12px; min-height: 0; }
+    .table-toolbar { display: flex; align-items: center; gap: 12px; padding: 6px 0; flex-shrink: 0; }
+    .toolbar-stat { font-size: 12px; color: var(--muted); }
+    .toolbar-stat span { color: var(--text); font-weight: 600; }
+    .ws-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 4px; }
+    .ws-dot.on { background: var(--green); box-shadow: 0 0 0 3px var(--green)33; }
+    .speedup { margin-left: auto; font-size: 13px; font-weight: 700; }
+
+    .table-outer { flex: 1; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+    .table-head { display: grid; background: var(--surface2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .th { padding: 0 12px; height: 34px; display: flex; align-items: center; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); border-right: 1px solid var(--border); }
+    .th:last-child { border-right: none; }
+
+    .table-viewport { flex: 1; overflow-y: auto; position: relative; min-height: 0; }
+    .table-viewport::-webkit-scrollbar { width: 6px; }
+    .table-viewport::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .row-spacer   { width: 100%; pointer-events: none; }
+    .row-container { position: absolute; top: 0; left: 0; right: 0; }
+
+    /* Rows */
+    .row { display: grid; height: var(--row-h); border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.08s; user-select: none; }
+    .row:hover { background: var(--surface2); }
+    .row.r-client { background: var(--surface); font-weight: 500; }
+    .row.r-entity { background: #131318; }
+    .row.r-del    { background: var(--bg); }
+    .row.flash    { animation: rowflash 0.9s ease-out; }
+    @keyframes rowflash { 0% { background: var(--blue)28; } 100% { background: transparent; } }
+
+    .cell { padding: 0 12px; display: flex; align-items: center; font-size: 13px; overflow: hidden; border-right: 1px solid var(--border); white-space: nowrap; gap: 6px; }
+    .cell:last-child { border-right: none; }
+    .cell-txt { overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12px; }
+    .cell-sub { font-size: 10px; color: var(--muted); display: block; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; }
+    .chev { font-size: 9px; color: var(--muted); transition: transform 0.15s; flex-shrink: 0; }
+    .chev.open { transform: rotate(90deg); }
+
+    /* Status badges */
+    .badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+    .s-not_started { background: var(--muted)1a;   color: var(--muted); }
+    .s-in_progress { background: var(--blue)1a;    color: var(--blue); }
+    .s-review      { background: var(--amber)1a;   color: var(--amber); }
+    .s-filed       { background: var(--purple)1a;  color: var(--purple); }
+    .s-complete    { background: var(--green)1a;   color: var(--green); }
+
+    .empty { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--muted); font-size: 13px; flex-direction: column; gap: 6px; }
+    .empty-hint { font-size: 11px; }
+
+    /* Live feed */
+    .live-feed { position: fixed; bottom: 16px; right: 24px; width: 270px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; z-index: 10; display: none; }
+    .feed-header { padding: 7px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
+    .feed-list { max-height: 150px; overflow-y: auto; }
+    .feed-item { padding: 5px 12px; font-size: 11px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-3px); } }
+    .feed-item:last-child { border-bottom: none; }
+    .feed-id { color: var(--muted); flex-shrink: 0; }
+    .feed-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .feed-list::-webkit-scrollbar { width: 4px; }
+    .feed-list::-webkit-scrollbar-thumb { background: var(--border); }
+  </style>
+</head>
+<body>
+
+<div class="header" style="display:flex;align-items:center;justify-content:space-between">
+  <div>
+    <h1>Engagement Data — Architecture POC</h1>
+    <p>N+1 waterfall vs flat query · virtual rendering · live WebSocket updates</p>
+  </div>
+  <a href="architecture.html" style="font-size:12px;color:var(--blue);text-decoration:none;white-space:nowrap;padding:6px 12px;border:1px solid var(--blue)44;border-radius:7px;background:var(--blue)11">Architecture →</a>
+</div>
+
+<div class="demo-row">
+  <!-- Waterfall card -->
+  <div class="demo-card waterfall">
+    <h2>❌ Legacy Waterfall (N+1)</h2>
+    <div class="stats">
+      <div class="stat"><div class="stat-val" id="wfQ">—</div><div class="stat-label">Queries</div></div>
+      <div class="stat"><div class="stat-val" id="wfT">—</div><div class="stat-label">Time</div></div>
+      <div class="stat"><div class="stat-val" id="wfR">10k</div><div class="stat-label">Rows</div></div>
+    </div>
+    <div class="card-row">
+      <button class="btn btn-red" id="wfBtn" onclick="runWaterfall()">① Run Waterfall</button>
+      <span class="verdict" id="wfV">Loads table in 3 phases — watch it build</span>
+    </div>
+    <div class="phases" id="wfPhases">
+      <div class="phase-line" id="wfP1">○ Phase 1 — clients (1 query)</div>
+      <div class="phase-line" id="wfP2">○ Phase 2 — entities (200 queries / 6 concurrent = 34 batches)</div>
+      <div class="phase-line" id="wfP3">○ Phase 3 — deliverables (1,000 queries / 6 concurrent = 167 batches)</div>
+    </div>
+  </div>
+
+  <!-- Flat card -->
+  <div class="demo-card flat">
+    <h2>✅ Flat Query + Virtual Render</h2>
+    <div class="stats">
+      <div class="stat"><div class="stat-val good">1</div><div class="stat-label">Queries</div></div>
+      <div class="stat"><div class="stat-val" id="flatT">—</div><div class="stat-label">DB Time</div></div>
+      <div class="stat"><div class="stat-val" id="flatR">—</div><div class="stat-label">Rows</div></div>
+    </div>
+    <div class="card-row">
+      <button class="btn btn-green" id="flatBtn" onclick="loadFlat()">② Load Flat Data</button>
+      <span class="verdict" id="flatV">Single JOIN · tree built client-side</span>
+    </div>
+  </div>
+</div>
+
+<!-- Filter + grouping bar -->
+<div class="filter-bar">
+  <div class="filter-group">
+    <span class="filter-label">Group by</span>
+    <div class="seg-ctrl" id="segCtrl">
+      <button class="seg active" data-mode="both"   onclick="setGroupMode('both')">Client + Entity</button>
+      <button class="seg"        data-mode="client" onclick="setGroupMode('client')">Client</button>
+      <button class="seg"        data-mode="entity" onclick="setGroupMode('entity')">Entity</button>
+      <button class="seg"        data-mode="none"   onclick="setGroupMode('none')">Flat</button>
+    </div>
+  </div>
+  <div class="filter-divider"></div>
+  <div class="filter-group">
+    <button class="btn btn-subtle" id="expandBtn" onclick="toggleExpandAll()" style="display:none">Collapse All</button>
+  </div>
+  <div class="filter-divider"></div>
+  <div class="filter-group">
+    <span class="filter-label">Status</span>
+    <div class="status-pills">
+      <button class="pill pill-all active"  onclick="toggleStatus('all')">All</button>
+      <button class="pill pill-not_started" onclick="toggleStatus('not_started')">Not Started</button>
+      <button class="pill pill-in_progress" onclick="toggleStatus('in_progress')">In Progress</button>
+      <button class="pill pill-review"      onclick="toggleStatus('review')">In Review</button>
+      <button class="pill pill-filed"       onclick="toggleStatus('filed')">Filed</button>
+      <button class="pill pill-complete"    onclick="toggleStatus('complete')">Complete</button>
+    </div>
+  </div>
+  <div class="filter-divider"></div>
+  <div class="filter-group">
+    <span class="filter-label">Region</span>
+    <select id="regionSelect" onchange="setRegion(this.value)">
+      <option value="">All regions</option>
+    </select>
+  </div>
+</div>
+
+<!-- Toolbar + table -->
+<div class="table-wrap">
+  <div class="table-toolbar">
+    <div class="toolbar-stat"><span id="tClients">—</span> clients</div>
+    <div class="toolbar-stat"><span id="tEntities">—</span> entities</div>
+    <div class="toolbar-stat"><span id="tDels">—</span> deliverables</div>
+    <div class="toolbar-stat"><span id="tVisible">—</span> visible rows</div>
+    <div class="toolbar-stat"><span class="ws-dot" id="wsDot"></span><span id="wsStatus">Connecting…</span></div>
+    <div class="speedup" id="speedup"></div>
+  </div>
+  <div class="table-outer">
+    <div class="table-head" id="tableHead"></div>
+    <div class="table-viewport" id="viewport" onscroll="renderRows()">
+      <div class="row-spacer" id="spacer"></div>
+      <div class="row-container" id="rowContainer">
+        <div class="empty">
+          <div>No data loaded</div>
+          <div class="empty-hint">Run either demo above to populate the table</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="live-feed" id="liveFeed">
+  <div class="feed-header"><span class="ws-dot on"></span>Live Updates</div>
+  <div class="feed-list" id="feedList"></div>
+</div>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────
+const ROW_H = 42, OVERSCAN = 8, CONCURRENCY = 6
+const SL = { not_started: 'Not Started', in_progress: 'In Progress', review: 'In Review', filed: 'Filed', complete: 'Complete' }
+const COL_TREE = '28px 1fr 160px 88px 120px 106px 120px'
+const COL_FLAT = '1fr 150px 88px 120px 106px 120px'
+
+// ── State ──────────────────────────────────────────────────────────
+let treeClients = [], deliverableMap = new Map(), allRegions = []
+let visibleRows = []
+let expandedClients = new Set(), expandedEntities = new Set()
+let recentlyUpdated = new Map()
+let groupMode = 'both'
+let activeStatuses = new Set(), activeRegion = ''
+let waterfallPartial = false
+let wfTime = null, flatTime = null, wfProdMs = null
+
+// ── Waterfall: streaming via SSE ───────────────────────────────────
+function runWaterfall() {
+  const btn = document.getElementById('wfBtn')
+  btn.disabled = true; btn.textContent = 'Running…'
+  document.getElementById('wfQ').textContent = '…'; document.getElementById('wfQ').className = 'stat-val'
+  document.getElementById('wfT').textContent = '…'; document.getElementById('wfT').className = 'stat-val'
+  document.getElementById('wfV').textContent = ''; document.getElementById('wfV').className = 'verdict'
+  setPhase(1, 'loading', 'Phase 1 — fetching clients…')
+  setPhase(2, '', 'Phase 2 — entities (1 query × 200 clients)')
+  setPhase(3, '', 'Phase 3 — deliverables (1 query × 1,000 entities)')
+
+  // Clear table for fresh waterfall load
+  treeClients = []; deliverableMap = new Map()
+  visibleRows = []; expandedClients.clear(); expandedEntities.clear()
+  waterfallPartial = true
+
+  const es = new EventSource('/api/waterfall-stream')
+
+  es.onmessage = e => {
+    const msg = JSON.parse(e.data)
+    document.getElementById('wfQ').textContent = msg.queryCount.toLocaleString()
+
+    if (msg.type === 'clients') {
+      waterfallLoadClients(msg.data)
+      setPhase(1, 'done', `✓ Phase 1 — ${msg.data.length} clients loaded (${msg.elapsed}ms, 1 query)`)
+      setPhase(2, 'loading', `Phase 2 — fetching entities (${msg.data.length} queries)…`)
+    }
+
+    if (msg.type === 'entities') {
+      waterfallLoadEntities(msg.data)
+      setPhase(2, 'done', `✓ Phase 2 — ${msg.data.length} entity queries · ${CONCURRENCY} concurrent → ${msg.entityBatches} batches (${msg.elapsed}ms)`)
+      setPhase(3, 'loading', `Phase 3 — fetching deliverables (${msg.data.length} queries)…`)
+    }
+
+    if (msg.type === 'deliverables') {
+      waterfallPartial = false
+      buildTree(msg.data)
+      expandAll()
+      rebuildAndRender()
+      populateRegionFilter()
+      document.getElementById('liveFeed').style.display = 'block'
+      document.getElementById('expandBtn').style.display = ''
+      const prodMin = (msg.prodEquivalentMs / 60000).toFixed(1)
+      setPhase(3, 'done', `✓ Phase 3 — ${msg.data.length.toLocaleString()} deliverable queries · ${CONCURRENCY} concurrent → ${msg.delivBatches} batches (${msg.totalTime}ms)`)
+
+      wfTime = msg.totalTime; wfProdMs = msg.prodEquivalentMs
+      document.getElementById('wfQ').textContent = msg.queryCount.toLocaleString(); document.getElementById('wfQ').className = 'stat-val bad'
+      document.getElementById('wfT').textContent = (msg.totalTime/1000).toFixed(1)+'s'; document.getElementById('wfT').className = 'stat-val bad'
+      document.getElementById('wfV').textContent = `${msg.queryCount} queries · 6 concurrent · ${(msg.totalTime/1000).toFixed(1)}s demo · ~${prodMin} min in prod`
+      document.getElementById('wfV').className = 'verdict bad'
+
+      btn.disabled = false; btn.textContent = '① Run Again'
+      updateSpeedup(); es.close()
+    }
+  }
+
+  es.onerror = () => { btn.disabled = false; btn.textContent = '① Run Again'; es.close() }
+}
+
+function setPhase(n, cls, text) {
+  const el = document.getElementById(`wfP${n}`)
+  el.className = `phase-line${cls ? ' '+cls : ''}`
+  el.textContent = text
+}
+
+// ── Waterfall partial tree builders ───────────────────────────────
+function waterfallLoadClients(clients) {
+  treeClients = clients.map(c => ({ ...c, entities: [], delCount: 0 }))
+  visibleRows = treeClients.map(c => ({ kind: 'client', c, count: '…' }))
+  updateHeaders()
+  renderRows()
+}
+
+function waterfallLoadEntities(entities) {
+  const clientMap = new Map(treeClients.map(c => [c.id, c]))
+  for (const e of entities) {
+    const c = clientMap.get(e.client_id)
+    if (c) c.entities.push({ id: e.id, name: e.name, entity_type: e.entity_type, clientId: e.client_id, clientName: c.name, deliverables: [] })
+  }
+  expandedClients = new Set(treeClients.map(c => c.id))
+  visibleRows = []
+  for (const c of treeClients) {
+    visibleRows.push({ kind: 'client', c, count: c.entities.length })
+    for (const e of c.entities) visibleRows.push({ kind: 'entity', e, c, count: '…' })
+  }
+  renderRows()
+}
+
+// ── Flat load ──────────────────────────────────────────────────────
+async function loadFlat() {
+  const btn = document.getElementById('flatBtn')
+  btn.disabled = true; btn.textContent = 'Loading…'
+  const res = await fetch('/api/flat'), d = await res.json()
+  flatTime = d.totalTime
+  document.getElementById('flatT').textContent = d.totalTime+'ms'; document.getElementById('flatT').className = 'stat-val good'
+  document.getElementById('flatR').textContent = d.rowCount.toLocaleString(); document.getElementById('flatR').className = 'stat-val good'
+  document.getElementById('flatV').textContent = `DB: ${d.totalTime}ms · ${d.rowCount.toLocaleString()} rows · 1 query`
+  document.getElementById('flatV').className = 'verdict good'
+  buildTree(d.data)
+  expandAll()
+  populateRegionFilter()
+  rebuildAndRender()
+  document.getElementById('liveFeed').style.display = 'block'
+  document.getElementById('expandBtn').style.display = ''
+  btn.disabled = false; btn.textContent = '② Reload'
+  updateSpeedup()
+}
+
+function updateSpeedup() {
+  if (wfTime && flatTime) {
+    const x = Math.round(wfTime / flatTime)
+    const prodNote = wfProdMs ? ` · prod: ~${(wfProdMs/60000).toFixed(1)} min vs ${flatTime}ms` : ''
+    document.getElementById('speedup').innerHTML = `<span style="color:var(--green)">${x}× faster (demo)${prodNote}</span>`
+  }
+}
+
+// ── Build tree ─────────────────────────────────────────────────────
+function buildTree(rows) {
+  const cMap = new Map(), eMap = new Map()
+  deliverableMap = new Map()
+  for (const r of rows) {
+    if (!cMap.has(r.client_id)) cMap.set(r.client_id, { id: r.client_id, name: r.client_name, industry: r.industry, region: r.region, entities: [], delCount: 0 })
+    const c = cMap.get(r.client_id)
+    if (!eMap.has(r.entity_id)) {
+      const e = { id: r.entity_id, name: r.entity_name, entity_type: r.entity_type, clientId: r.client_id, clientName: r.client_name, deliverables: [] }
+      eMap.set(r.entity_id, e); c.entities.push(e)
+    }
+    const d = { id: r.id, type: r.type, period: r.period, status: r.status, due_date: r.due_date, assigned_to: r.assigned_to, clientId: r.client_id, entityId: r.entity_id, region: r.region, clientName: r.client_name, entityName: r.entity_name, entityType: r.entity_type }
+    eMap.get(r.entity_id).deliverables.push(d)
+    deliverableMap.set(r.id, d)
+    c.delCount++
+  }
+  treeClients = Array.from(cMap.values())
+  allRegions = [...new Set(treeClients.map(c => c.region))].sort()
+}
+
+// ── Expand / collapse ──────────────────────────────────────────────
+function expandAll() {
+  for (const c of treeClients) {
+    expandedClients.add(c.id)
+    for (const e of c.entities) expandedEntities.add(e.id)
+  }
+  updateExpandBtn(true)
+}
+
+function collapseAll() {
+  expandedClients.clear(); expandedEntities.clear()
+  updateExpandBtn(false)
+}
+
+function toggleExpandAll() {
+  if (groupMode === 'none') return
+  const expanded = checkFullyExpanded()
+  expanded ? collapseAll() : expandAll()
+  rebuildAndRender()
+}
+
+function checkFullyExpanded() {
+  if (!treeClients.length) return false
+  if (groupMode === 'client' || groupMode === 'both')
+    if (!treeClients.every(c => expandedClients.has(c.id))) return false
+  if (groupMode === 'entity' || groupMode === 'both')
+    if (!treeClients.every(c => c.entities.every(e => expandedEntities.has(e.id)))) return false
+  return true
+}
+
+function updateExpandBtn(expanded) {
+  const btn = document.getElementById('expandBtn')
+  btn.textContent = expanded ? 'Collapse All' : 'Expand All'
+}
+
+// ── Filtering ──────────────────────────────────────────────────────
+function getFiltered() {
+  return Array.from(deliverableMap.values()).filter(d => {
+    if (activeStatuses.size && !activeStatuses.has(d.status)) return false
+    if (activeRegion && d.region !== activeRegion) return false
+    return true
+  })
+}
+
+// ── Build visible rows (all modes + filters) ───────────────────────
+function buildVisibleRows() {
+  visibleRows = []
+  const dels = getFiltered()
+  if (!dels.length) return
+
+  if (groupMode === 'none') {
+    for (const d of dels) visibleRows.push({ kind: 'del', d, mode: 'flat' })
+    return
+  }
+
+  if (groupMode === 'entity') {
+    const byEnt = new Map()
+    for (const d of dels) { if (!byEnt.has(d.entityId)) byEnt.set(d.entityId, []); byEnt.get(d.entityId).push(d) }
+    for (const c of treeClients)
+      for (const e of c.entities) {
+        const ed = byEnt.get(e.id); if (!ed?.length) continue
+        visibleRows.push({ kind: 'entity', e, c, count: ed.length })
+        if (!expandedEntities.has(e.id)) continue
+        for (const d of ed) visibleRows.push({ kind: 'del', d, mode: 'entity' })
+      }
+    return
+  }
+
+  const byClient = new Map()
+  for (const d of dels) { if (!byClient.has(d.clientId)) byClient.set(d.clientId, []); byClient.get(d.clientId).push(d) }
+  for (const c of treeClients) {
+    const cd = byClient.get(c.id); if (!cd?.length) continue
+    visibleRows.push({ kind: 'client', c, count: cd.length })
+    if (!expandedClients.has(c.id)) continue
+    if (groupMode === 'both') {
+      const byEnt = new Map()
+      for (const d of cd) { if (!byEnt.has(d.entityId)) byEnt.set(d.entityId, []); byEnt.get(d.entityId).push(d) }
+      for (const e of c.entities) {
+        const ed = byEnt.get(e.id); if (!ed?.length) continue
+        visibleRows.push({ kind: 'entity', e, c, count: ed.length })
+        if (!expandedEntities.has(e.id)) continue
+        for (const d of ed) visibleRows.push({ kind: 'del', d, mode: 'both' })
+      }
+    } else {
+      for (const d of cd) visibleRows.push({ kind: 'del', d, mode: 'client' })
+    }
+  }
+}
+
+// ── Virtual rendering ──────────────────────────────────────────────
+function renderRows() {
+  if (!treeClients.length) return
+  const vp = document.getElementById('viewport')
+  const spacer = document.getElementById('spacer')
+  const container = document.getElementById('rowContainer')
+  const total = visibleRows.length
+  const scrollTop = vp.scrollTop, vpH = vp.clientHeight
+  spacer.style.height = `${total * ROW_H}px`
+  const s = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN)
+  const e = Math.min(total, Math.ceil((scrollTop + vpH) / ROW_H) + OVERSCAN)
+  container.style.transform = `translateY(${s * ROW_H}px)`
+  let html = ''
+  for (let i = s; i < e; i++) html += renderRow(visibleRows[i])
+  container.innerHTML = html
+  updateToolbarCounts()
+}
+
+function renderRow(r) {
+  if (r.kind === 'client') return renderClient(r)
+  if (r.kind === 'entity') return renderEntity(r)
+  return renderDel(r)
+}
+
+function renderClient({ c, count }) {
+  const open = expandedClients.has(c.id)
+  return `<div class="row r-client" style="grid-template-columns:${COL_TREE}" onclick="toggleClient(${c.id})">
+    <div class="cell" style="justify-content:center"><span class="chev ${open?'open':''}">▶</span></div>
+    <div class="cell"><strong>${x(c.name)}</strong></div>
+    <div class="cell cell-txt">${x(c.industry)}</div>
+    <div class="cell cell-txt">${x(c.region)}</div>
+    <div class="cell cell-txt">${count} items</div>
+    <div class="cell cell-txt">${c.entities.length} entities</div>
+    <div class="cell"></div>
+  </div>`
+}
+
+function renderEntity({ e, c, count }) {
+  const open = expandedEntities.has(e.id)
+  const sub = groupMode === 'entity' ? `<span class="cell-sub">${x(e.clientName)}</span>` : ''
+  const indent = groupMode === 'both' ? 28 : 12
+  return `<div class="row r-entity" style="grid-template-columns:${COL_TREE}" onclick="toggleEntity(${e.id})">
+    <div class="cell" style="justify-content:center"><span class="chev ${open?'open':''}">▶</span></div>
+    <div class="cell" style="padding-left:${indent}px"><span style="overflow:hidden;text-overflow:ellipsis">${x(e.name)}${sub}</span></div>
+    <div class="cell cell-txt">${x(e.entity_type)}</div>
+    <div class="cell"></div>
+    <div class="cell cell-txt">${count} deliverables</div>
+    <div class="cell"></div>
+    <div class="cell"></div>
+  </div>`
+}
+
+function renderDel({ d, mode }) {
+  const flash = recentlyUpdated.has(d.id) ? ' flash' : ''
+  const indent = mode === 'both' ? 48 : (mode === 'client' || mode === 'entity') ? 28 : 12
+  const sub = mode === 'flat'   ? `<span class="cell-sub">${x(d.entityName)} · ${x(d.clientName)}</span>`
+            : mode === 'client' ? `<span class="cell-sub">${x(d.entityName)}</span>` : ''
+  const col = mode === 'flat' ? COL_FLAT : COL_TREE
+
+  if (mode === 'flat') return `<div class="row r-del${flash}" style="grid-template-columns:${col}" data-did="${d.id}">
+    <div class="cell" style="padding-left:12px"><span style="overflow:hidden;text-overflow:ellipsis">${x(d.type)}${sub}</span></div>
+    <div class="cell cell-txt">${x(d.entityType)}</div>
+    <div class="cell cell-txt">${x(d.period)}</div>
+    <div class="cell"><span class="badge s-${d.status}">${SL[d.status]}</span></div>
+    <div class="cell cell-txt">${x(d.due_date)}</div>
+    <div class="cell cell-txt">${x(d.assigned_to)}</div>
+  </div>`
+
+  return `<div class="row r-del${flash}" style="grid-template-columns:${col}" data-did="${d.id}">
+    <div class="cell"></div>
+    <div class="cell" style="padding-left:${indent}px"><span style="overflow:hidden;text-overflow:ellipsis">${x(d.type)}${sub}</span></div>
+    <div class="cell cell-txt">${x(d.entityType)}</div>
+    <div class="cell cell-txt">${x(d.period)}</div>
+    <div class="cell"><span class="badge s-${d.status}">${SL[d.status]}</span></div>
+    <div class="cell cell-txt">${x(d.due_date)}</div>
+    <div class="cell cell-txt">${x(d.assigned_to)}</div>
+  </div>`
+}
+
+// ── Column headers ─────────────────────────────────────────────────
+function updateHeaders() {
+  const head = document.getElementById('tableHead')
+  if (groupMode === 'none') {
+    head.style.gridTemplateColumns = COL_FLAT
+    head.innerHTML = `<div class="th">Deliverable · Entity · Client</div><div class="th">Entity Type</div><div class="th">Period</div><div class="th">Status</div><div class="th">Due Date</div><div class="th">Assigned To</div>`
+  } else {
+    head.style.gridTemplateColumns = COL_TREE
+    head.innerHTML = `<div class="th"></div><div class="th">Name</div><div class="th">Detail</div><div class="th">Period / Region</div><div class="th">Status / Count</div><div class="th">Count</div><div class="th">Assigned To</div>`
+  }
+}
+
+// ── Toggle expand ──────────────────────────────────────────────────
+function toggleClient(id) {
+  expandedClients.has(id) ? expandedClients.delete(id) : expandedClients.add(id)
+  updateExpandBtn(checkFullyExpanded())
+  buildVisibleRows(); renderRows()
+}
+function toggleEntity(id) {
+  expandedEntities.has(id) ? expandedEntities.delete(id) : expandedEntities.add(id)
+  updateExpandBtn(checkFullyExpanded())
+  buildVisibleRows(); renderRows()
+}
+
+// ── Group mode ─────────────────────────────────────────────────────
+function setGroupMode(mode) {
+  groupMode = mode
+  document.querySelectorAll('#segCtrl .seg').forEach(b => b.classList.toggle('active', b.dataset.mode === mode))
+  const showExpand = mode !== 'none'
+  document.getElementById('expandBtn').style.display = treeClients.length && showExpand ? '' : 'none'
+  rebuildAndRender()
+}
+
+// ── Status filter ──────────────────────────────────────────────────
+function toggleStatus(s) {
+  if (s === 'all') {
+    activeStatuses.clear()
+    document.querySelectorAll('.status-pills .pill').forEach(b => b.classList.remove('active'))
+    document.querySelector('.pill-all').classList.add('active')
+  } else {
+    activeStatuses.has(s) ? activeStatuses.delete(s) : activeStatuses.add(s)
+    document.querySelector(`.pill-${s}`)?.classList.toggle('active', activeStatuses.has(s))
+    document.querySelector('.pill-all').classList.toggle('active', activeStatuses.size === 0)
+  }
+  rebuildAndRender()
+}
+
+function setRegion(val) { activeRegion = val; rebuildAndRender() }
+
+function populateRegionFilter() {
+  const sel = document.getElementById('regionSelect')
+  const cur = sel.value
+  sel.innerHTML = '<option value="">All regions</option>' + allRegions.map(r => `<option value="${x(r)}" ${r===cur?'selected':''}>${x(r)}</option>`).join('')
+}
+
+// ── Toolbar counts ─────────────────────────────────────────────────
+function updateToolbarCounts() {
+  if (waterfallPartial) {
+    const ec = treeClients.reduce((n, c) => n + c.entities.length, 0)
+    document.getElementById('tClients').textContent  = treeClients.length.toLocaleString()
+    document.getElementById('tEntities').textContent = ec > 0 ? ec.toLocaleString() : '…'
+    document.getElementById('tDels').textContent     = '…'
+    document.getElementById('tVisible').textContent  = visibleRows.length.toLocaleString()
+    return
+  }
+  const filtered = getFiltered()
+  document.getElementById('tClients').textContent  = new Set(filtered.map(d => d.clientId)).size.toLocaleString()
+  document.getElementById('tEntities').textContent = new Set(filtered.map(d => d.entityId)).size.toLocaleString()
+  document.getElementById('tDels').textContent     = filtered.length.toLocaleString()
+  document.getElementById('tVisible').textContent  = visibleRows.length.toLocaleString()
+}
+
+function rebuildAndRender() {
+  if (!treeClients.length) return
+  buildVisibleRows(); updateHeaders(); renderRows()
+}
+
+// ── WebSocket ──────────────────────────────────────────────────────
+const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`)
+ws.onopen  = () => { document.getElementById('wsDot').className = 'ws-dot on'; document.getElementById('wsStatus').textContent = 'Live' }
+ws.onclose = () => { document.getElementById('wsDot').className = 'ws-dot';    document.getElementById('wsStatus').textContent = 'Disconnected' }
+ws.onmessage = e => {
+  const msg = JSON.parse(e.data)
+  if (msg.type !== 'update') return
+  const d = deliverableMap.get(msg.id)
+  if (!d) return
+  d.status = msg.status
+  if (treeClients.length && !waterfallPartial) {
+    recentlyUpdated.set(msg.id, Date.now())
+    buildVisibleRows(); renderRows()
+    setTimeout(() => { recentlyUpdated.delete(msg.id); renderRows() }, 900)
+  }
+  addToFeed(msg.id, d.type, msg.status)
+}
+
+function addToFeed(id, name, status) {
+  const list = document.getElementById('feedList')
+  const item = document.createElement('div')
+  item.className = 'feed-item'
+  item.innerHTML = `<span class="feed-id">#${id}</span><span class="feed-name">${x(name)}</span><span class="badge s-${status}">${SL[status]}</span>`
+  list.prepend(item)
+  while (list.children.length > 12) list.removeChild(list.lastChild)
+}
+
+// ── Utils ──────────────────────────────────────────────────────────
+function x(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : '' }
+
+updateHeaders()
+</script>
+</body>
+</html>

@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture Explained — Engagement Data POC</title>
+  <style>
+    :root {
+      --bg: #0e0e11; --surface: #1a1a1f; --surface2: #222228; --border: #2e2e36;
+      --text: #e8e8ed; --muted: #6e6e7a;
+      --green: #32d74b; --amber: #ffd60a; --red: #ff453a; --blue: #4a9eff; --purple: #bf5af2;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 40px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 10; }
+    .topbar-title { font-size: 14px; font-weight: 600; color: var(--muted); }
+    .topbar-nav { display: flex; gap: 20px; font-size: 13px; }
+    .topbar-nav a { color: var(--muted); }
+    .topbar-nav a:hover { color: var(--text); text-decoration: none; }
+    .topbar-nav a.active { color: var(--text); font-weight: 600; }
+
+    .page { max-width: 900px; margin: 0 auto; padding: 48px 40px 80px; }
+
+    /* Section headings */
+    .section { margin-bottom: 56px; }
+    .section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--blue); margin-bottom: 10px; }
+    h1 { font-size: 32px; font-weight: 800; letter-spacing: -1px; line-height: 1.2; margin-bottom: 14px; }
+    h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 10px; }
+    h3 { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+    p { color: #c0c0cc; font-size: 15px; margin-bottom: 12px; }
+    p:last-child { margin-bottom: 0; }
+    .lead { font-size: 17px; color: var(--text); line-height: 1.7; }
+
+    /* Hero comparison */
+    .hero-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 32px 0; }
+    .hero-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 24px; }
+    .hero-card.bad  { border-color: var(--red)44; }
+    .hero-card.good { border-color: var(--green)44; }
+    .hero-card-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 16px; }
+    .bad  .hero-card-label { color: var(--red); }
+    .good .hero-card-label { color: var(--green); }
+    .hero-stat { margin-bottom: 12px; }
+    .hero-stat-val { font-size: 28px; font-weight: 800; letter-spacing: -1px; line-height: 1; }
+    .bad  .hero-stat-val { color: var(--red); }
+    .good .hero-stat-val { color: var(--green); }
+    .hero-stat-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    /* Flow diagrams */
+    .flow { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px 32px; margin: 20px 0; font-size: 13px; }
+    .flow-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 20px; }
+    .flow.bad  { border-color: var(--red)33; }
+    .flow.good { border-color: var(--green)33; }
+
+    .layer { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 6px; }
+    .layer-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; margin-top: 2px; }
+    .layer-icon.browser { background: var(--blue)22; }
+    .layer-icon.server  { background: var(--amber)22; }
+    .layer-icon.db      { background: var(--purple)22; }
+    .layer-body { flex: 1; }
+    .layer-name { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 4px; }
+    .layer-detail { color: var(--text); font-size: 13px; line-height: 1.5; }
+    .layer-detail code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 12px; font-family: 'SF Mono', 'Cascadia Code', monospace; color: var(--amber); }
+    .layer-detail .tag-bad  { color: var(--red);   font-weight: 700; }
+    .layer-detail .tag-good { color: var(--green); font-weight: 700; }
+    .layer-detail .tag-note { color: var(--muted); font-size: 12px; }
+
+    .flow-arrow { text-align: left; padding-left: 52px; color: var(--border); font-size: 18px; line-height: 1; margin: 2px 0; }
+    .flow-arrow.repeat { color: var(--red)88; font-size: 12px; padding-left: 54px; font-style: italic; }
+
+    .flow-divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+
+    /* Efficiency cards */
+    .efficiency-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 20px 0; }
+    .eff-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .eff-icon { font-size: 22px; margin-bottom: 12px; }
+    .eff-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
+    .eff-body { font-size: 13px; color: #a0a0b0; line-height: 1.6; }
+    .eff-metric { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12px; }
+    .eff-metric .before { color: var(--red); }
+    .eff-metric .after  { color: var(--green); }
+
+    /* Comparison table */
+    .compare-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 20px 0; }
+    .compare-table th { text-align: left; padding: 10px 14px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); background: var(--surface2); border-bottom: 1px solid var(--border); }
+    .compare-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .compare-table tr:last-child td { border-bottom: none; }
+    .compare-table tr:hover td { background: var(--surface); }
+    .compare-table .metric { font-weight: 600; color: var(--text); }
+    .compare-table .val-bad  { color: var(--red); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .compare-table .val-good { color: var(--green); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .compare-table .note { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+    /* Code blocks */
+    .code-block { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin: 16px 0; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; font-size: 12.5px; line-height: 1.7; overflow-x: auto; }
+    .code-block .cmt  { color: var(--muted); }
+    .code-block .kw   { color: var(--purple); }
+    .code-block .str  { color: var(--green); }
+    .code-block .fn   { color: var(--blue); }
+    .code-block .num  { color: var(--amber); }
+    .code-block .bad  { color: var(--red); }
+    .code-block .good { color: var(--green); }
+
+    /* Callout */
+    .callout { border-left: 3px solid var(--blue); background: var(--blue)0d; border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 20px 0; font-size: 14px; color: #c8d8f0; line-height: 1.6; }
+    .callout strong { color: var(--text); }
+
+    /* Query count visual */
+    .query-vis { display: flex; align-items: center; gap: 10px; margin: 16px 0; flex-wrap: wrap; }
+    .qblock { display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 11px; font-weight: 700; padding: 4px 10px; }
+    .qblock.single { background: var(--green)22; border: 1px solid var(--green)44; color: var(--green); font-size: 13px; padding: 6px 14px; }
+    .qblock.many { background: var(--red)11; border: 1px solid var(--red)33; color: var(--red)cc; }
+    .qblock.plus { background: none; border: none; color: var(--muted); font-size: 16px; padding: 0 2px; }
+    .qblock-label { font-size: 10px; color: var(--muted); text-align: center; margin-top: 3px; }
+    .qblock-wrap { display: flex; flex-direction: column; align-items: center; }
+
+    @media (max-width: 680px) {
+      .hero-compare { grid-template-columns: 1fr; }
+      .efficiency-grid { grid-template-columns: 1fr; }
+      .page { padding: 32px 20px 60px; }
+      .topbar { padding: 12px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar-title">Engagement Data POC</span>
+  <nav class="topbar-nav">
+    <a href="engagement.html">Live Demo</a>
+    <a href="architecture.html" class="active">Architecture</a>
+  </nav>
+</div>
+
+<div class="page">
+
+  <!-- ── Intro ── -->
+  <div class="section">
+    <div class="section-label">Architecture Explained</div>
+    <h1>Why the legacy approach<br>breaks at scale</h1>
+    <p class="lead">
+      Loading a hierarchical dataset — clients, their entities, their deliverables — sounds simple.
+      The naive implementation makes it catastrophic. This page explains what goes wrong and exactly
+      how three techniques fix it.
+    </p>
+
+    <div class="hero-compare">
+      <div class="hero-card bad">
+        <div class="hero-card-label">❌ Legacy — N+1 Waterfall</div>
+        <div class="hero-stat">
+          <div class="hero-stat-val">1,201</div>
+          <div class="hero-stat-label">Database queries per page load</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-val">~6.7 min</div>
+          <div class="hero-stat-label">Estimated load time in production (6 concurrent, 2s/call)</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-val">10,000</div>
+          <div class="hero-stat-label">DOM nodes rendered (full dataset)</div>
+        </div>
+      </div>
+      <div class="hero-card good">
+        <div class="hero-card-label">✅ Optimized — Flat + Virtual</div>
+        <div class="hero-stat">
+          <div class="hero-stat-val">1</div>
+          <div class="hero-stat-label">Database query per page load</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-val">&lt; 50ms</div>
+          <div class="hero-stat-label">Typical load time (single JOIN, indexed)</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-val">~20</div>
+          <div class="hero-stat-label">DOM nodes rendered (virtual scroll viewport)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── The Problem ── -->
+  <div class="section">
+    <div class="section-label">The Problem</div>
+    <h2>What is the N+1 query problem?</h2>
+    <p>
+      It happens when you load a list of N items, then make one additional query <em>for each item</em>
+      to load related data. With a second level of nesting (clients → entities → deliverables),
+      it becomes N×M+1.
+    </p>
+
+    <div class="query-vis">
+      <div class="qblock-wrap"><div class="qblock many">1</div><div class="qblock-label">clients</div></div>
+      <div class="qblock plus">+</div>
+      <div class="qblock-wrap"><div class="qblock many">200</div><div class="qblock-label">entities</div></div>
+      <div class="qblock plus">+</div>
+      <div class="qblock-wrap"><div class="qblock many">1,000</div><div class="qblock-label">deliverables</div></div>
+      <div class="qblock plus">=</div>
+      <div class="qblock-wrap"><div class="qblock many" style="font-size:15px;padding:6px 14px">1,201 queries</div><div class="qblock-label">per page load</div></div>
+    </div>
+
+    <p>
+      This pattern often starts as clean-looking code — each layer fetches what it needs.
+      It's only when you multiply by real data volumes that the cost becomes visible.
+    </p>
+
+    <div class="code-block"><span class="cmt">// Looks clean. Hides the problem.</span>
+<span class="kw">const</span> clients = <span class="kw">await</span> <span class="fn">getClients</span>()                    <span class="cmt">// 1 query</span>
+<span class="kw">for</span> (<span class="kw">const</span> client <span class="kw">of</span> clients) {
+  client.entities = <span class="kw">await</span> <span class="fn">getEntities</span>(client.id)   <span class="cmt bad">// +1 per client = 200 queries</span>
+  <span class="kw">for</span> (<span class="kw">const</span> entity <span class="kw">of</span> client.entities) {
+    entity.deliverables = <span class="kw">await</span> <span class="fn">getDeliverables</span>(entity.id) <span class="cmt bad">// +1 per entity = 1,000 queries</span>
+  }
+}</div>
+
+    <div class="callout">
+      <strong>Why is this so slow in practice?</strong> Even if each query takes only 2ms in the database,
+      each one is a separate round-trip through the network, ORM, connection pool, and API layer.
+      At 2 seconds per call with a concurrency limit of 6, 1,201 queries becomes 201 batches —
+      over 6 minutes of wall-clock time before the user sees data.
+    </div>
+  </div>
+
+  <!-- ── Legacy Architecture ── -->
+  <div class="section">
+    <div class="section-label">Legacy Architecture</div>
+    <h2>How the waterfall loads data</h2>
+    <p>Each phase cannot start until the previous one completes. The browser sits idle between phases.</p>
+
+    <div class="flow bad">
+      <div class="flow-title">Request flow — N+1 waterfall</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser</div>
+          <div class="layer-detail">Page loads → fires <code>GET /api/clients</code></div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon server">⚙️</div>
+        <div class="layer-body">
+          <div class="layer-name">API Server</div>
+          <div class="layer-detail"><code>SELECT * FROM clients</code> → returns 200 rows</div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser</div>
+          <div class="layer-detail">Receives clients → fires <code>GET /api/entities/:id</code> for each<br>
+          <span class="tag-note">Max 6 concurrent → ceil(200 / 6) = <span class="tag-bad">34 batches</span></span></div>
+        </div>
+      </div>
+      <div class="flow-arrow repeat">↑↓ × 34 batches (200 queries total)</div>
+
+      <div class="layer">
+        <div class="layer-icon server">⚙️</div>
+        <div class="layer-body">
+          <div class="layer-name">API Server</div>
+          <div class="layer-detail">Each call: <code>SELECT * FROM entities WHERE client_id = ?</code><br>
+          <span class="tag-note">200 separate prepared statement executions</span></div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser</div>
+          <div class="layer-detail">Receives entities → fires <code>GET /api/deliverables/:id</code> for each<br>
+          <span class="tag-note">Max 6 concurrent → ceil(1,000 / 6) = <span class="tag-bad">167 batches</span></span></div>
+        </div>
+      </div>
+      <div class="flow-arrow repeat">↑↓ × 167 batches (1,000 queries total)</div>
+
+      <div class="layer">
+        <div class="layer-icon server">⚙️</div>
+        <div class="layer-body">
+          <div class="layer-name">API Server</div>
+          <div class="layer-detail">Each call: <code>SELECT * FROM deliverables WHERE entity_id = ?</code><br>
+          <span class="tag-note">1,000 separate prepared statement executions</span></div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser</div>
+          <div class="layer-detail">Assembles full tree → <span class="tag-bad">renders all 10,000 rows as DOM nodes</span><br>
+          <span class="tag-note">Memory spikes, scroll becomes sluggish on large datasets</span></div>
+        </div>
+      </div>
+    </div>
+
+    <p>
+      The rendering problem compounds the query problem. Once data finally arrives, the browser
+      must create and layout 10,000 DOM nodes — each with cells, text, badges, and event listeners.
+      On a mid-range device this alone adds several seconds and makes scrolling janky.
+    </p>
+  </div>
+
+  <!-- ── Optimized Architecture ── -->
+  <div class="section">
+    <div class="section-label">Optimized Architecture</div>
+    <h2>Three techniques, applied together</h2>
+    <p>The optimized approach addresses queries, rendering, and live updates as separate problems with separate solutions.</p>
+
+    <div class="flow good">
+      <div class="flow-title">Request flow — flat query + virtual render + WebSocket deltas</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser</div>
+          <div class="layer-detail">Page loads → fires one <code>GET /api/data</code> · also opens a <code>WebSocket</code> connection</div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon server">⚙️</div>
+        <div class="layer-body">
+          <div class="layer-name">API Server</div>
+          <div class="layer-detail">Executes a single prepared JOIN query</div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon db">🗄️</div>
+        <div class="layer-body">
+          <div class="layer-name">Database</div>
+          <div class="layer-detail"><span class="tag-good">1 query</span> — JOIN across 3 tables using indexed foreign keys<br>
+          <span class="tag-note">Returns 10,000 flat rows with all fields denormalized</span></div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser — Tree Build</div>
+          <div class="layer-detail">Iterates flat rows once, builds <code>Map&lt;id, node&gt;</code> in memory<br>
+          <span class="tag-note">O(n) pass — ~1ms for 10,000 rows</span></div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser — Virtual Render</div>
+          <div class="layer-detail"><span class="tag-good">Only ~20 DOM nodes rendered</span> — the visible viewport rows<br>
+          <span class="tag-note">Spacer div holds total scroll height · absolute positioning repositions on scroll</span></div>
+        </div>
+      </div>
+
+      <hr class="flow-divider">
+
+      <div class="layer">
+        <div class="layer-icon server">⚙️</div>
+        <div class="layer-body">
+          <div class="layer-name">Server — Live Updates</div>
+          <div class="layer-detail">On any status change, pushes a tiny delta over WebSocket:<br>
+          <code>{"type":"update", "id":4821, "status":"filed"}</code></div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser — Delta Merge</div>
+          <div class="layer-detail"><code>deliverableMap.get(id).status = status</code> — updates one field in the Map<br>
+          <span class="tag-note">Re-renders only the row that changed, if it's visible · no reload required</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Efficiency Breakdown ── -->
+  <div class="section">
+    <div class="section-label">Where the Performance Comes From</div>
+    <h2>Three independent optimizations</h2>
+
+    <div class="efficiency-grid">
+
+      <div class="eff-card">
+        <div class="eff-icon">🔗</div>
+        <div class="eff-title">1. Query Consolidation</div>
+        <div class="eff-body">
+          Move the join into the database where it belongs. SQL was designed to traverse
+          relationships across tables in a single pass using indexes. Doing it in application
+          code with a loop is reconstructing a JOIN, badly.
+        </div>
+        <div class="eff-metric">
+          <span class="before">1,201 round-trips</span> → <span class="after">1 query</span><br>
+          <span style="color:var(--muted);font-size:11px">DB indexes on client_id, entity_id make the join O(n log n)</span>
+        </div>
+      </div>
+
+      <div class="eff-card">
+        <div class="eff-icon">🪟</div>
+        <div class="eff-title">2. Virtual Rendering</div>
+        <div class="eff-body">
+          The browser only needs to display what fits in the viewport — roughly 20 rows.
+          Virtual scroll keeps a flat array of all rows in memory, but only creates DOM nodes
+          for the visible slice. The scrollbar is simulated with a spacer div.
+        </div>
+        <div class="eff-metric">
+          <span class="before">10,000 DOM nodes</span> → <span class="after">~20 DOM nodes</span><br>
+          <span style="color:var(--muted);font-size:11px">Constant memory regardless of dataset size</span>
+        </div>
+      </div>
+
+      <div class="eff-card">
+        <div class="eff-icon">⚡</div>
+        <div class="eff-title">3. WebSocket Deltas</div>
+        <div class="eff-body">
+          Instead of polling or reloading to get live status updates, a persistent WebSocket
+          connection lets the server push only what changed. A single status change is a
+          ~60-byte message, not a 10,000-row reload.
+        </div>
+        <div class="eff-metric">
+          <span class="before">Full reload on change</span> → <span class="after">~60 byte delta</span><br>
+          <span style="color:var(--muted);font-size:11px">UI stays live without any polling overhead</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── SQL Comparison ── -->
+  <div class="section">
+    <div class="section-label">The Query</div>
+    <h2>What the flat query looks like</h2>
+    <p>
+      The entire data payload — all 10,000 deliverables with their client and entity context — is returned
+      by a single SQL statement. The database uses foreign key indexes to execute this in milliseconds.
+    </p>
+
+    <div class="code-block"><span class="cmt">-- One query replaces 1,201</span>
+<span class="kw">SELECT</span>
+  d.id, d.type, d.period, d.status, d.due_date, d.assigned_to,
+  e.id   <span class="kw">AS</span> entity_id,   e.name <span class="kw">AS</span> entity_name,   e.entity_type,
+  c.id   <span class="kw">AS</span> client_id,   c.name <span class="kw">AS</span> client_name,   c.industry, c.region
+<span class="kw">FROM</span>       deliverables d
+<span class="kw">JOIN</span>       entities     e  <span class="kw">ON</span> d.entity_id = e.id      <span class="cmt">-- idx_del_entity</span>
+<span class="kw">JOIN</span>       clients      c  <span class="kw">ON</span> e.client_id = c.id      <span class="cmt">-- idx_ent_client</span>
+<span class="kw">ORDER BY</span>  c.name, e.name, d.type</div>
+
+    <p>
+      The result is a flat list of denormalized rows — each row carries its own client and entity
+      context. The browser reassembles the tree client-side using a two-pass Map lookup, which
+      is O(n) and takes about 1ms for 10,000 rows.
+    </p>
+
+    <div class="code-block"><span class="cmt">// Client-side tree build — O(n), one pass</span>
+<span class="kw">const</span> clientMap = <span class="kw">new</span> Map(), entityMap = <span class="kw">new</span> Map()
+<span class="kw">for</span> (<span class="kw">const</span> row <span class="kw">of</span> flatRows) {
+  <span class="kw">if</span> (!clientMap.<span class="fn">has</span>(row.client_id))
+    clientMap.<span class="fn">set</span>(row.client_id, { ...clientFields(row), entities: [] })
+
+  <span class="kw">if</span> (!entityMap.<span class="fn">has</span>(row.entity_id)) {
+    <span class="kw">const</span> e = { ...entityFields(row), deliverables: [] }
+    entityMap.<span class="fn">set</span>(row.entity_id, e)
+    clientMap.<span class="fn">get</span>(row.client_id).entities.<span class="fn">push</span>(e)
+  }
+
+  entityMap.<span class="fn">get</span>(row.entity_id).deliverables.<span class="fn">push</span>(deliverableFields(row))
+}</div>
+  </div>
+
+  <!-- ── Virtual Scroll ── -->
+  <div class="section">
+    <div class="section-label">Virtual Rendering</div>
+    <h2>How virtual scroll works</h2>
+    <p>
+      A virtual list maintains two things: a flat array of all rows (in memory, not DOM),
+      and a viewport that only renders the slice currently visible. As the user scrolls,
+      rows are recycled — the same ~20 DOM nodes are repositioned and their content is swapped.
+    </p>
+
+    <div class="flow">
+      <div class="flow-title">Virtual scroll mechanics</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;font-size:13px;color:#a0a0b0">
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--muted);margin-bottom:10px">Memory</div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;line-height:2">
+            <div style="color:var(--text)"><code style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:12px;color:var(--amber)">visibleRows[]</code> — 1,200 items</div>
+            <div>Each item: plain JS object, no DOM</div>
+            <div>Filters/group changes rebuild this array</div>
+            <div>Expand/collapse changes this array</div>
+            <div style="color:var(--green);font-size:12px">~300KB RAM for 10,000 rows</div>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--muted);margin-bottom:10px">DOM</div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;line-height:2">
+            <div style="color:var(--text)">Spacer div: <code style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:12px;color:var(--amber)">height = rows × 42px</code></div>
+            <div>Row container: <code style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:12px;color:var(--amber)">transform: translateY</code></div>
+            <div>Only renders scroll window ± 8 rows</div>
+            <div>On scroll: recalculate slice, swap content</div>
+            <div style="color:var(--green);font-size:12px">~20 DOM nodes regardless of dataset size</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="code-block"><span class="cmt">// Virtual render — called on every scroll event</span>
+<span class="kw">function</span> <span class="fn">renderRows</span>() {
+  <span class="kw">const</span> scrollTop  = viewport.scrollTop
+  <span class="kw">const</span> viewH      = viewport.clientHeight
+  <span class="kw">const</span> totalRows  = visibleRows.length
+
+  <span class="cmt">// Which rows are in the viewport?</span>
+  <span class="kw">const</span> startIdx = Math.<span class="fn">max</span>(<span class="num">0</span>, Math.<span class="fn">floor</span>(scrollTop / ROW_H) - OVERSCAN)
+  <span class="kw">const</span> endIdx   = Math.<span class="fn">min</span>(totalRows, Math.<span class="fn">ceil</span>((scrollTop + viewH) / ROW_H) + OVERSCAN)
+
+  spacer.style.height        = (totalRows * ROW_H) + <span class="str">'px'</span>          <span class="cmt">// fake total height</span>
+  rowContainer.style.transform = <span class="str">`translateY(${startIdx * ROW_H}px)`</span>  <span class="cmt">// position visible slice</span>
+
+  rowContainer.innerHTML = visibleRows
+    .<span class="fn">slice</span>(startIdx, endIdx)
+    .<span class="fn">map</span>(row => <span class="fn">renderRow</span>(row))       <span class="cmt">// only render what's visible</span>
+    .<span class="fn">join</span>(<span class="str">''</span>)
+}</div>
+  </div>
+
+  <!-- ── Comparison table ── -->
+  <div class="section">
+    <div class="section-label">Summary</div>
+    <h2>Side-by-side comparison</h2>
+
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th>Legacy (N+1 Waterfall)</th>
+          <th>Optimized</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="metric">DB queries per load</td>
+          <td><span class="val-bad">1,201</span><div class="note">1 + 200 (entities) + 1,000 (deliverables)</div></td>
+          <td><span class="val-good">1</span><div class="note">Single JOIN across 3 tables</div></td>
+        </tr>
+        <tr>
+          <td class="metric">Load time (production)</td>
+          <td><span class="val-bad">~6.7 minutes</span><div class="note">201 batches × 2s, 6 concurrent</div></td>
+          <td><span class="val-good">&lt; 50ms</span><div class="note">Single query, indexed, on fast DB</div></td>
+        </tr>
+        <tr>
+          <td class="metric">DOM nodes in browser</td>
+          <td><span class="val-bad">10,000+</span><div class="note">One node per deliverable row, always</div></td>
+          <td><span class="val-good">~20</span><div class="note">Viewport-sized window only</div></td>
+        </tr>
+        <tr>
+          <td class="metric">Filter/group changes</td>
+          <td><span class="val-bad">New API requests</span><div class="note">Each filter triggers fresh waterfall</div></td>
+          <td><span class="val-good">Client-side, instant</span><div class="note">All data already in memory, just rebuild visibleRows[]</div></td>
+        </tr>
+        <tr>
+          <td class="metric">Live status updates</td>
+          <td><span class="val-bad">Full page reload</span><div class="note">Or polling every N seconds</div></td>
+          <td><span class="val-good">~60-byte WebSocket push</span><div class="note">Server pushes delta, browser patches one Map entry</div></td>
+        </tr>
+        <tr>
+          <td class="metric">Where join logic lives</td>
+          <td><span class="val-bad">Application code</span><div class="note">Nested loops reconstructing what SQL does natively</div></td>
+          <td><span class="val-good">Database</span><div class="note">SQL JOIN + indexes — optimized for exactly this</div></td>
+        </tr>
+        <tr>
+          <td class="metric">Scroll performance</td>
+          <td><span class="val-bad">Degrades with row count</span><div class="note">Browser must layout and paint all DOM nodes</div></td>
+          <td><span class="val-good">Constant</span><div class="note">Same 20 nodes whether 1,000 or 1,000,000 rows</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="text-align:center;padding-top:16px">
+    <a href="engagement.html" style="display:inline-block;background:var(--blue)22;border:1px solid var(--blue)44;color:var(--blue);padding:10px 24px;border-radius:8px;font-size:14px;font-weight:600">
+      ← Back to Live Demo
+    </a>
+  </div>
+
+</div>
+</body>
+</html>

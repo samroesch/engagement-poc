@@ -688,6 +688,158 @@
     </table>
   </div>
 
+  <!-- ── Indexes & Join Performance ── -->
+  <div class="section">
+    <div class="section-label">Production Readiness</div>
+    <h2>Indexes and join performance at scale</h2>
+    <p>
+      Joins are not inherently slow. A JOIN across several tables on properly indexed columns can return
+      results in milliseconds even at millions of rows. The danger is that joins <em>amplify</em> any
+      indexing mistake — a missing index that costs 10ms at 10,000 rows costs 10 seconds at 10 million.
+    </p>
+
+    <h3 style="margin-top:24px;margin-bottom:10px">The rule: every join column must be indexed</h3>
+    <p>
+      When the database executes a JOIN, it needs to look up matching rows in the joined table.
+      Without an index, it scans the entire table for every row on the left side — an O(n²) operation.
+      With an index, it's a B-tree lookup: O(log n) per row.
+    </p>
+
+    <div class="code-block"><span class="cmt">-- For every JOIN like this:</span>
+<span class="kw">JOIN</span> entities     e <span class="kw">ON</span> d.entity_id = e.id
+<span class="kw">JOIN</span> clients      c <span class="kw">ON</span> e.client_id = c.id
+<span class="kw">JOIN</span> staff        s <span class="kw">ON</span> d.assigned_to = s.id
+<span class="kw">JOIN</span> service_lines sl <span class="kw">ON</span> d.service_line_id = sl.id
+
+<span class="cmt">-- You need an index on the FK side of each join:</span>
+<span class="kw">CREATE INDEX</span> idx_del_entity       <span class="kw">ON</span> deliverables(entity_id)
+<span class="kw">CREATE INDEX</span> idx_del_assigned      <span class="kw">ON</span> deliverables(assigned_to)
+<span class="kw">CREATE INDEX</span> idx_del_service_line  <span class="kw">ON</span> deliverables(service_line_id)
+<span class="kw">CREATE INDEX</span> idx_ent_client        <span class="kw">ON</span> entities(client_id)
+
+<span class="cmt">-- The PK side (e.id, c.id, s.id) is already indexed by default</span>
+<span class="cmt">-- It's the FK side living in the large table that's usually missing</span></div>
+
+    <p>
+      The pattern to check: for every <code>JOIN … ON big_table.some_id = other_table.id</code>,
+      there should be an index on <code>big_table.some_id</code>. The <code>other_table.id</code>
+      side is a primary key and already indexed. It's always the foreign key column in the large
+      table that gets missed.
+    </p>
+
+    <h3 style="margin-top:28px;margin-bottom:10px">Index filter columns too — not just join columns</h3>
+    <p>
+      Join indexes get you a fast join. But if your query also filters (<code>WHERE office = 'xyz'
+      AND due_date &gt; '2025-01-01'</code>), the database still has to evaluate those conditions.
+      Without indexes on filter columns, it scans all joined rows to find the matching ones.
+    </p>
+
+    <div class="code-block"><span class="cmt">-- Common filter columns that should be indexed:</span>
+<span class="kw">CREATE INDEX</span> idx_del_status    <span class="kw">ON</span> deliverables(status)
+<span class="kw">CREATE INDEX</span> idx_del_due_date  <span class="kw">ON</span> deliverables(due_date)
+<span class="kw">CREATE INDEX</span> idx_del_period    <span class="kw">ON</span> deliverables(period)
+<span class="kw">CREATE INDEX</span> idx_cli_office    <span class="kw">ON</span> clients(office)
+<span class="kw">CREATE INDEX</span> idx_cli_region    <span class="kw">ON</span> clients(region)
+
+<span class="cmt">-- For common filter combinations, a composite index can be even faster:</span>
+<span class="kw">CREATE INDEX</span> idx_del_office_date <span class="kw">ON</span> deliverables(office, due_date)
+<span class="cmt">-- ↑ covers WHERE office = ? AND due_date BETWEEN ? AND ? in one index scan</span></div>
+
+    <div class="callout">
+      <strong>Sort columns need indexes too.</strong> An <code>ORDER BY due_date</code> without an
+      index forces the database to sort the entire result set in memory or on disk after the JOIN.
+      At 10M rows this can add seconds. An index on the sort column lets the DB read rows in
+      already-sorted order — no sort step needed at all.
+    </div>
+
+    <h3 style="margin-top:28px;margin-bottom:10px">Pitfalls that silently break indexes</h3>
+    <p>
+      Having an index isn't enough if the query is written in a way that prevents the DB from using it.
+      These are the most common ways a valid index gets bypassed:
+    </p>
+
+    <div class="flow" style="border-color:var(--red)33">
+      <div class="flow-title" style="color:var(--red)">Index-defeating patterns to avoid</div>
+
+      <div style="display:flex;flex-direction:column;gap:18px;font-size:13px">
+
+        <div>
+          <div style="font-weight:700;color:var(--text);margin-bottom:4px">1. Functions on indexed columns</div>
+          <div class="code-block" style="margin:0"><span class="bad">WHERE YEAR(due_date) = 2025</span>               <span class="cmt">-- function prevents index use</span>
+<span class="good">WHERE due_date BETWEEN '2025-01-01' AND '2025-12-31'</span>  <span class="cmt">-- index used ✓</span>
+
+<span class="bad">WHERE LOWER(client_name) = 'acme'</span>             <span class="cmt">-- function prevents index use</span>
+<span class="good">WHERE client_name = 'Acme'</span>                    <span class="cmt">-- index used ✓ (store normalised)</span></div>
+          <div style="color:var(--muted);margin-top:6px">Any function wrapping a column forces a full scan. The index is on the raw value, not the computed result.</div>
+        </div>
+
+        <div>
+          <div style="font-weight:700;color:var(--text);margin-bottom:4px">2. Implicit type coercion</div>
+          <div class="code-block" style="margin:0"><span class="bad">WHERE client_id = '42'</span>   <span class="cmt">-- client_id is INT, '42' is VARCHAR → full scan</span>
+<span class="good">WHERE client_id = 42</span>     <span class="cmt">-- types match → index used ✓</span></div>
+          <div style="color:var(--muted);margin-top:6px">When column type and parameter type don't match, the DB coerces every row to compare — defeating the index. Common when IDs come through an ORM as strings.</div>
+        </div>
+
+        <div>
+          <div style="font-weight:700;color:var(--text);margin-bottom:4px">3. Leading wildcard LIKE</div>
+          <div class="code-block" style="margin:0"><span class="bad">WHERE client_name LIKE '%corp'</span>   <span class="cmt">-- leading wildcard → full scan</span>
+<span class="good">WHERE client_name LIKE 'corp%'</span>   <span class="cmt">-- trailing wildcard → index used ✓</span></div>
+          <div style="color:var(--muted);margin-top:6px">B-tree indexes work left-to-right. A leading wildcard means "could be anything at the start" — the index can't help. If you need full-text search, use a dedicated FTS index.</div>
+        </div>
+
+        <div>
+          <div style="font-weight:700;color:var(--text);margin-bottom:4px">4. OR across different columns</div>
+          <div class="code-block" style="margin:0"><span class="bad">WHERE status = 'filed' OR due_date &lt; '2025-01-01'</span>
+<span class="cmt">-- DB often can't use both indexes simultaneously → may fall back to full scan</span>
+
+<span class="good">SELECT * FROM deliverables WHERE status = 'filed'</span>
+<span class="good">UNION ALL</span>
+<span class="good">SELECT * FROM deliverables WHERE due_date &lt; '2025-01-01' AND status != 'filed'</span>
+<span class="cmt">-- each branch uses its own index ✓</span></div>
+          <div style="color:var(--muted);margin-top:6px">OR conditions across different columns are hard for query planners. UNION ALL lets each branch use its own index independently.</div>
+        </div>
+
+        <div>
+          <div style="font-weight:700;color:var(--text);margin-bottom:4px">5. Stale statistics</div>
+          <div class="code-block" style="margin:0"><span class="cmt">-- Postgres: refresh planner statistics after bulk loads</span>
+<span class="kw">ANALYZE</span> deliverables
+
+<span class="cmt">-- SQL Server equivalent</span>
+<span class="kw">UPDATE STATISTICS</span> deliverables</div>
+          <div style="color:var(--muted);margin-top:6px">The query planner decides whether to use an index based on estimated row counts. After bulk inserts or deletes, statistics can be stale — causing the planner to choose a full scan even when an index would be faster. Most DBs auto-analyze on a schedule, but after a large data migration, run it manually.</div>
+        </div>
+
+      </div>
+    </div>
+
+    <h3 style="margin-top:28px;margin-bottom:10px">How to diagnose: EXPLAIN</h3>
+    <p>
+      Every major database has an explain plan command that shows exactly how a query will execute —
+      which indexes it uses, which it ignores, and where the cost is. This is the first tool to reach
+      for when a query is slow.
+    </p>
+
+    <div class="code-block"><span class="cmt">-- Postgres: EXPLAIN ANALYZE actually runs the query and shows real timings</span>
+<span class="kw">EXPLAIN ANALYZE</span>
+<span class="kw">SELECT</span> d.*, e.name, c.name
+<span class="kw">FROM</span> deliverables d
+<span class="kw">JOIN</span> entities e <span class="kw">ON</span> d.entity_id = e.id
+<span class="kw">JOIN</span> clients  c <span class="kw">ON</span> e.client_id = c.id
+<span class="kw">WHERE</span> c.office = <span class="str">'London'</span> <span class="kw">AND</span> d.due_date &gt; <span class="str">'2025-01-01'</span>
+
+<span class="cmt">-- Look for these warning signs in the output:</span>
+<span class="cmt">--   Seq Scan on deliverables  ← full table scan, no index used</span>
+<span class="cmt">--   rows=100000 (actual rows=12)  ← planner estimate was way off (stale stats)</span>
+<span class="cmt">--   Hash Join  ← can be fine, but Nested Loop + Index Scan is usually faster for FK joins</span>
+<span class="cmt">--   Sort (cost=...)  ← in-memory sort, ORDER BY column probably not indexed</span></div>
+
+    <p>
+      The goal is to see <code>Index Scan</code> or <code>Index Only Scan</code> on your large tables,
+      not <code>Seq Scan</code>. If you see a seq scan on a table with millions of rows, that's
+      where to add the missing index.
+    </p>
+  </div>
+
   <!-- ── Future Thinking: Progressive Loading ── -->
   <div class="section">
     <div class="section-label" style="color:var(--amber)">Future Thinking — Not Implemented</div>

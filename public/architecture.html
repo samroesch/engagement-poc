@@ -479,6 +479,101 @@
 }</div>
   </div>
 
+  <!-- ── Sorting ── -->
+  <div class="section">
+    <div class="section-label">Sorting</div>
+    <h2>How column sort triggers a new stream</h2>
+    <p>
+      Sorting in the flat view can't be done cheaply in the browser — the dataset is 100,000 rows and
+      the browser only holds what has been streamed so far. Instead, clicking a column header fires a
+      new server-sent event stream with the requested sort order, and the server re-runs the query
+      with a different <code style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:12px;font-family:monospace;color:var(--amber)">ORDER BY</code>.
+      The table repopulates as the first batch of rows arrives — exactly like the initial load.
+    </p>
+
+    <div class="flow good">
+      <div class="flow-title">Sort click → re-stream flow (flat view)</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser</div>
+          <div class="layer-detail">User clicks <strong>Due Date ↑</strong> header → <code>setSort('due_date')</code><br>
+          Cancels any in-flight SSE stream, opens a new one:<br>
+          <code>GET /api/flat-stream?sort=due_date&amp;dir=asc</code></div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon server">⚙️</div>
+        <div class="layer-body">
+          <div class="layer-name">API Server</div>
+          <div class="layer-detail">Validates sort column against a whitelist (prevents SQL injection)<br>
+          Builds query with dynamic <code>ORDER BY</code>:</div>
+        </div>
+      </div>
+
+      <div class="code-block" style="margin:10px 32px"><span class="cmt">// Only these columns can be sorted — anything else falls back to default</span>
+<span class="kw">const</span> SORT_COLS = {
+  due_date:     <span class="str">'d.due_date'</span>,
+  client_name:  <span class="str">'c.name'</span>,
+  service_line: <span class="str">'sl.name'</span>,
+  assigned_to:  <span class="str">'ps.name'</span>,
+  period:       <span class="str">'d.period'</span>,
+  status:       <span class="str">'d.status'</span>,
+}
+<span class="kw">const</span> col   = SORT_COLS[req.query.sort]     <span class="cmt">// 'due_date' → 'd.due_date'</span>
+<span class="kw">const</span> dir   = req.query.dir === <span class="str">'desc'</span> ? <span class="str">'DESC'</span> : <span class="str">'ASC'</span>
+<span class="kw">const</span> order = col ? <span class="str">`${col} ${dir}, d.id`</span> : <span class="str">'c.name, e.name, d.type'</span>
+<span class="cmt">// ↑ d.id tiebreaker ensures stable sort when values are equal</span></div>
+
+      <div class="flow-arrow" style="padding-left:32px">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon db">🗄️</div>
+        <div class="layer-body">
+          <div class="layer-name">Database</div>
+          <div class="layer-detail"><span class="tag-good">Same 1 JOIN query</span> — different <code>ORDER BY d.due_date ASC, d.id</code><br>
+          <span class="tag-note">Index on <code>deliverables(due_date)</code> makes sorted reads efficient</span></div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon server">⚙️</div>
+        <div class="layer-body">
+          <div class="layer-name">API Server — Streaming</div>
+          <div class="layer-detail">Uses a cursor (<code>stmt.iterate()</code>) to stream rows without loading all 100,000 into memory<br>
+          Sends batches of 5,000 rows as SSE events — first batch arrives in ~100ms</div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser</div>
+          <div class="layer-detail">Receives each batch, appends rows to <code>deliverableMap</code>, re-renders visible slice<br>
+          <span class="tag-good">Table populates progressively</span> — user sees sorted rows immediately, more load in background</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>Tree view sorts differently.</strong> In the grouped tree view (Client, Entity, or Client + Entity),
+      all 100,000 deliverables are already in memory from the initial load. Clicking a column header
+      re-sorts the in-memory array client-side and rebuilds the visible rows — no server round-trip at all.
+      Sort + re-render takes ~2ms for 100,000 rows.
+    </div>
+
+    <p>
+      The distinction matters: flat view needs server-side sort because it can't hold the full dataset in
+      sorted order client-side without re-querying. Tree view already has everything in memory, so it can
+      sort for free. Both use the same column headers and sort state — the difference is invisible to the user.
+    </p>
+  </div>
+
   <!-- ── Virtual Scroll ── -->
   <div class="section">
     <div class="section-label">Virtual Rendering</div>
@@ -583,6 +678,11 @@
           <td class="metric">Scroll performance</td>
           <td><span class="val-bad">Degrades with row count</span><div class="note">Browser must layout and paint all DOM nodes</div></td>
           <td><span class="val-good">Constant</span><div class="note">Same 20 nodes whether 1,000 or 1,000,000 rows</div></td>
+        </tr>
+        <tr>
+          <td class="metric">Column sort</td>
+          <td><span class="val-bad">New waterfall (1,201 queries)</span><div class="note">Each sort re-triggers full N+1 sequence</div></td>
+          <td><span class="val-good">1 re-query (flat) or 0 queries (tree)</span><div class="note">Flat: new SSE stream, server-side ORDER BY, rows stream in ~100ms · Tree: client-side sort of in-memory array, ~2ms</div></td>
         </tr>
       </tbody>
     </table>

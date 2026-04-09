@@ -688,6 +688,176 @@
     </table>
   </div>
 
+  <!-- ── Future Thinking: Progressive Loading ── -->
+  <div class="section">
+    <div class="section-label" style="color:var(--amber)">Future Thinking — Not Implemented</div>
+    <h2>Progressive loading at scale</h2>
+    <p>
+      The current POC loads all 100,000 deliverables on every page open. For a real dataset in the
+      hundreds of thousands or millions, that becomes impractical — even with streaming, you're
+      transferring megabytes the user may never scroll to. This section captures the thinking
+      on how to fix that without sacrificing the filter-sort-scroll experience.
+    </p>
+
+    <div class="callout" style="border-color:var(--amber);background:var(--amber)0d;color:#e8d8a0">
+      <strong>Nothing below is implemented.</strong> This is forward-looking design thinking only.
+      The live demo uses full-load streaming for simplicity and to keep the POC focused on
+      the N+1 vs flat query comparison.
+    </div>
+
+    <h3 style="margin-top:28px;margin-bottom:10px">Why full load breaks at scale</h3>
+    <p>
+      With 100,000 rows the current approach works fine — the JOIN query returns in &lt;50ms and
+      streaming delivers the first batch in ~100ms. At 1 million rows, that first query takes
+      longer, the stream takes ~10 seconds to complete, and the browser is holding ~30MB of
+      JavaScript objects in memory. At 10 million rows it's simply not viable.
+    </p>
+    <p>
+      The obvious fix — "just paginate" — creates a new problem: filters and sorts apply across
+      the <em>full dataset</em>, not just the loaded page. A user filtering to a specific status
+      might need to see rows that are on page 47. You can't filter client-side data you haven't loaded.
+    </p>
+
+    <h3 style="margin-top:28px;margin-bottom:10px">The right first step: server-side scoping</h3>
+    <p>
+      Before adding pagination complexity, the most impactful change is reducing the dataset at
+      source. In a real engagement tool, users always operate within a context — a portfolio, a
+      team, a date range. Scoping the query server-side to "deliverables for this user's assigned
+      clients, due in the next 90 days" might take a dataset from 1 million rows down to 5,000
+      before any pagination is needed. Most users never need all the data.
+    </p>
+
+    <div class="flow" style="border-color:var(--amber)33">
+      <div class="flow-title">Server-scoped query — scope first, then stream</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser</div>
+          <div class="layer-detail">Page loads with user context: <code>GET /api/flat-stream?user=42&amp;horizon=90d</code></div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon server">⚙️</div>
+        <div class="layer-body">
+          <div class="layer-name">API Server</div>
+          <div class="layer-detail">Applies server-side scope before streaming:<br>
+          <code>WHERE c.id IN (user's assigned clients) AND d.due_date &lt;= now + 90d</code><br>
+          <span class="tag-note">Dataset shrinks from 1M → ~5K before any data leaves the DB</span></div>
+        </div>
+      </div>
+      <div class="flow-arrow">↓</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">🌐</div>
+        <div class="layer-body">
+          <div class="layer-name">Browser</div>
+          <div class="layer-detail">Receives only the relevant slice — filters/sort work normally client-side<br>
+          <span class="tag-good">Full filter + sort experience on a manageable in-memory dataset</span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:28px;margin-bottom:10px">Filter-triggered continuation loading</h3>
+    <p>
+      For cases where even the scoped dataset is large, a hybrid approach lets you load progressively
+      without losing filter coverage. The key insight: when a filter knocks out most of the loaded
+      rows, the user is implicitly telling you they want to see further into the dataset.
+    </p>
+
+    <div class="code-block"><span class="cmt">// Client state for progressive loading</span>
+<span class="kw">let</span> loadedOffset = <span class="num">0</span>          <span class="cmt">// how many rows the server has sent so far</span>
+<span class="kw">let</span> hasMore      = <span class="kw">true</span>        <span class="cmt">// server sets this false when cursor is exhausted</span>
+<span class="kw">const</span> LOAD_SIZE  = <span class="num">1000</span>        <span class="cmt">// rows per fetch</span>
+<span class="kw">const</span> THRESHOLD  = <span class="num">200</span>         <span class="cmt">// if filtered rows drop below this, fetch more</span>
+
+<span class="kw">function</span> <span class="fn">onFilterChange</span>() {
+  <span class="fn">applyFilters</span>()                <span class="cmt">// client-side, instant</span>
+  <span class="kw">if</span> (filteredRows.length &lt; THRESHOLD &amp;&amp; hasMore) {
+    <span class="fn">fetchMore</span>(loadedOffset)     <span class="cmt">// filtered result is thin — pull next batch</span>
+  }
+}
+
+<span class="kw">async function</span> <span class="fn">fetchMore</span>(offset) {
+  <span class="cmt">// ?offset=N tells the server where the cursor left off</span>
+  <span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">fetch</span>(<span class="str">`/api/flat-stream?sort=${sortCol}&amp;dir=${sortDir}&amp;offset=${offset}`</span>)
+  <span class="cmt">// Server streams next LOAD_SIZE rows, then sends: {"type":"meta","hasMore":true,"offset":2000}</span>
+  <span class="cmt">// Merge into deliverableMap, re-apply filters, update loadedOffset + hasMore</span>
+}</div>
+
+    <p>
+      This gives you snappy client-side filtering on loaded data, with automatic backfill when
+      the filter result is sparse. The user experience is seamless — apply a filter, see results
+      immediately from loaded data, and watch more appear if the dataset continues.
+    </p>
+
+    <h3 style="margin-top:28px;margin-bottom:10px">Why sort changes require a full reset</h3>
+    <p>
+      Continuation loading has one hard constraint: it only works within a fixed sort order.
+      If you've loaded rows 0–1000 sorted by due date, and the user clicks "sort by assigned to",
+      the rows you have in memory are no longer in the right relative order. You must start a
+      fresh stream from offset 0 with the new <code>ORDER BY</code>.
+    </p>
+    <p>
+      This is actually fine — sort is already a server round-trip in flat mode, so the UX
+      expectation is already set. The pagination cursor just resets as part of the sort change.
+    </p>
+
+    <div class="callout" style="border-color:var(--purple);background:var(--purple)0d;color:#d8c0f0">
+      <strong>Keyset pagination vs OFFSET.</strong> For deep continuation fetches, <code>OFFSET 50000</code>
+      forces the database to scan and discard 50,000 rows every time. Keyset pagination (cursor-based)
+      avoids this: instead of an offset number, you pass the last-seen value of the sort column,
+      and the query uses <code>WHERE due_date &gt; '2025-06-14'</code> to start exactly where you left off.
+      This keeps continuation fetches fast regardless of how deep into the dataset you are — but it
+      requires the sort column to be indexed and the cursor value to be stable between fetches.
+    </div>
+
+    <table class="compare-table" style="margin-top:24px">
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th>Queries</th>
+          <th>Data transferred</th>
+          <th>Filter coverage</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="metric">Full load (current POC)</td>
+          <td><span class="val-good">1</span></td>
+          <td><span class="val-bad">All rows</span><div class="note">~8MB for 100K rows</div></td>
+          <td><span class="val-good">Complete</span></td>
+        </tr>
+        <tr>
+          <td class="metric">Server-scoped load</td>
+          <td><span class="val-good">1</span></td>
+          <td><span class="val-good">Scoped slice only</span><div class="note">~40KB for user's relevant rows</div></td>
+          <td><span class="val-good">Complete within scope</span></td>
+        </tr>
+        <tr>
+          <td class="metric">Pagination (OFFSET)</td>
+          <td><span style="color:var(--amber);font-weight:700">1 per page</span></td>
+          <td><span class="val-good">N rows at a time</span></td>
+          <td><span class="val-bad">Only loaded pages</span><div class="note">Filters miss unloaded pages</div></td>
+        </tr>
+        <tr>
+          <td class="metric">Progressive + continuation</td>
+          <td><span style="color:var(--amber);font-weight:700">1 + backfills</span></td>
+          <td><span class="val-good">First N + on-demand</span></td>
+          <td><span style="color:var(--amber);font-weight:700">Grows with usage</span><div class="note">Full coverage once all batches loaded</div></td>
+        </tr>
+        <tr>
+          <td class="metric">Keyset continuation</td>
+          <td><span style="color:var(--amber);font-weight:700">1 + backfills</span></td>
+          <td><span class="val-good">First N + on-demand</span></td>
+          <td><span style="color:var(--amber);font-weight:700">Grows with usage</span><div class="note">Fast at any depth — no OFFSET scan penalty</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
   <div style="text-align:center;padding-top:16px">
     <a href="engagement.html" style="display:inline-block;background:var(--blue)22;border:1px solid var(--blue)44;color:var(--blue);padding:10px 24px;border-radius:8px;font-size:14px;font-weight:600">
       ← Back to Live Demo

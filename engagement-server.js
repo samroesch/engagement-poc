@@ -100,6 +100,7 @@ seed()
 // ── Middleware ────────────────────────────────────────────────────
 app.use(express.json())
 app.use(express.static(path.join(__dirname, 'public')))
+app.get('/', (req, res) => res.redirect('/engagement.html'))
 
 // ── API: Waterfall stream (SSE — N+1 in 3 visible phases) ────────
 app.get('/api/waterfall-stream', async (req, res) => {

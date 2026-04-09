@@ -118,6 +118,17 @@
     .s-review      { background: var(--amber)1a;   color: var(--amber); }
     .s-filed       { background: var(--purple)1a;  color: var(--purple); }
     .s-complete    { background: var(--green)1a;   color: var(--green); }
+    /* Complexity badges */
+    .cx-low  { background: var(--green)1a; color: var(--green); }
+    .cx-med  { background: var(--amber)1a; color: var(--amber); }
+    .cx-high { background: var(--red)1a;   color: var(--red); }
+    .cx-crit { background: var(--red)33;   color: var(--red); font-weight: 800; }
+    /* E-file badges */
+    .ef-na   { background: var(--muted)1a; color: var(--muted); }
+    .ef-nf   { background: var(--amber)1a; color: var(--amber); }
+    .ef-pend { background: var(--blue)1a;  color: var(--blue); }
+    .ef-acc  { background: var(--green)1a; color: var(--green); }
+    .ef-rej  { background: var(--red)1a;   color: var(--red); }
 
     .empty { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--muted); font-size: 13px; flex-direction: column; gap: 6px; }
     .empty-hint { font-size: 11px; }
@@ -152,7 +163,7 @@
     <div class="stats">
       <div class="stat"><div class="stat-val" id="wfQ">—</div><div class="stat-label">Queries</div></div>
       <div class="stat"><div class="stat-val" id="wfT">—</div><div class="stat-label">Time</div></div>
-      <div class="stat"><div class="stat-val" id="wfR">10k</div><div class="stat-label">Rows</div></div>
+      <div class="stat"><div class="stat-val" id="wfR">100k</div><div class="stat-label">Rows</div></div>
     </div>
     <div class="card-row">
       <button class="btn btn-red" id="wfBtn" onclick="runWaterfall()">① Run Waterfall</button>
@@ -161,7 +172,7 @@
     <div class="phases" id="wfPhases">
       <div class="phase-line" id="wfP1">○ Phase 1 — clients (1 query)</div>
       <div class="phase-line" id="wfP2">○ Phase 2 — entities (200 queries / 6 concurrent = 34 batches)</div>
-      <div class="phase-line" id="wfP3">○ Phase 3 — deliverables (1,000 queries / 6 concurrent = 167 batches)</div>
+      <div class="phase-line" id="wfP3">○ Phase 3 — deliverables (2,000 queries / 6 concurrent = 334 batches)</div>
     </div>
   </div>
 
@@ -214,6 +225,24 @@
       <option value="">All regions</option>
     </select>
   </div>
+  <div class="filter-divider"></div>
+  <div class="filter-group">
+    <span class="filter-label">Service Line</span>
+    <select id="slSelect" onchange="setServiceLine(this.value)">
+      <option value="">All service lines</option>
+    </select>
+  </div>
+  <div class="filter-divider"></div>
+  <div class="filter-group">
+    <span class="filter-label">Complexity</span>
+    <select id="cxSelect" onchange="setComplexity(this.value)">
+      <option value="">All</option>
+      <option value="low">Low</option>
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+      <option value="critical">Critical</option>
+    </select>
+  </div>
 </div>
 
 <!-- Toolbar + table -->
@@ -249,16 +278,19 @@
 // ── Constants ──────────────────────────────────────────────────────
 const ROW_H = 42, OVERSCAN = 8, CONCURRENCY = 6
 const SL = { not_started: 'Not Started', in_progress: 'In Progress', review: 'In Review', filed: 'Filed', complete: 'Complete' }
-const COL_TREE = '28px 1fr 160px 88px 120px 106px 120px'
-const COL_FLAT = '1fr 150px 88px 120px 106px 120px'
+const CX = { low: ['Low','cx-low'], medium: ['Med','cx-med'], high: ['High','cx-high'], critical: ['Crit','cx-crit'] }
+const EF = { not_applicable: ['N/A','ef-na'], not_filed: ['Not Filed','ef-nf'], pending: ['Pending','ef-pend'], accepted: ['Accepted','ef-acc'], rejected: ['Rejected','ef-rej'] }
+// columns: chevron | name | type | service_line | period | complexity | status | e_file | due_date | assigned
+const COL_TREE = '28px 1fr 120px 110px 90px 82px 100px 82px 100px 120px'
+const COL_FLAT = '1fr 120px 110px 90px 82px 100px 82px 100px 120px'
 
 // ── State ──────────────────────────────────────────────────────────
-let treeClients = [], deliverableMap = new Map(), allRegions = []
+let treeClients = [], deliverableMap = new Map(), allRegions = [], allServiceLines = []
 let visibleRows = []
 let expandedClients = new Set(), expandedEntities = new Set()
 let recentlyUpdated = new Map()
 let groupMode = 'both'
-let activeStatuses = new Set(), activeRegion = ''
+let activeStatuses = new Set(), activeRegion = '', activeServiceLine = '', activeComplexity = ''
 let waterfallPartial = false
 let wfTime = null, flatTime = null, wfProdMs = null
 
@@ -389,13 +421,20 @@ function buildTree(rows) {
       const e = { id: r.entity_id, name: r.entity_name, entity_type: r.entity_type, clientId: r.client_id, clientName: r.client_name, deliverables: [] }
       eMap.set(r.entity_id, e); c.entities.push(e)
     }
-    const d = { id: r.id, type: r.type, period: r.period, status: r.status, due_date: r.due_date, assigned_to: r.assigned_to, clientId: r.client_id, entityId: r.entity_id, region: r.region, clientName: r.client_name, entityName: r.entity_name, entityType: r.entity_type }
+    const d = { id: r.id, type: r.type, period: r.period, status: r.status, due_date: r.due_date,
+                milestone_start_date: r.milestone_start_date, assigned_to: r.assigned_to,
+                reviewer: r.reviewer, service_line: r.service_line,
+                complexity: r.complexity, e_file_status: r.e_file_status,
+                farmer: r.farmer, us_resident: r.us_resident,
+                clientId: r.client_id, entityId: r.entity_id, region: r.region,
+                clientName: r.client_name, entityName: r.entity_name, entityType: r.entity_type }
     eMap.get(r.entity_id).deliverables.push(d)
     deliverableMap.set(r.id, d)
     c.delCount++
   }
   treeClients = Array.from(cMap.values())
   allRegions = [...new Set(treeClients.map(c => c.region))].sort()
+  allServiceLines = [...new Set(Array.from(deliverableMap.values()).map(d => d.service_line))].sort()
 }
 
 // ── Expand / collapse ──────────────────────────────────────────────
@@ -437,7 +476,9 @@ function updateExpandBtn(expanded) {
 function getFiltered() {
   return Array.from(deliverableMap.values()).filter(d => {
     if (activeStatuses.size && !activeStatuses.has(d.status)) return false
-    if (activeRegion && d.region !== activeRegion) return false
+    if (activeRegion      && d.region       !== activeRegion)      return false
+    if (activeServiceLine && d.service_line !== activeServiceLine) return false
+    if (activeComplexity  && d.complexity   !== activeComplexity)  return false
     return true
   })
 }
@@ -515,12 +556,11 @@ function renderClient({ c, count }) {
   const open = expandedClients.has(c.id)
   return `<div class="row r-client" style="grid-template-columns:${COL_TREE}" onclick="toggleClient(${c.id})">
     <div class="cell" style="justify-content:center"><span class="chev ${open?'open':''}">▶</span></div>
-    <div class="cell"><strong>${x(c.name)}</strong></div>
-    <div class="cell cell-txt">${x(c.industry)}</div>
-    <div class="cell cell-txt">${x(c.region)}</div>
-    <div class="cell cell-txt">${count} items</div>
+    <div class="cell"><strong>${x(c.name)}</strong><span class="cell-sub">${x(c.industry)} · ${x(c.region)}</span></div>
+    <div class="cell cell-txt">${count} deliverables</div>
     <div class="cell cell-txt">${c.entities.length} entities</div>
-    <div class="cell"></div>
+    <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+    <div class="cell"></div><div class="cell"></div><div class="cell"></div>
   </div>`
 }
 
@@ -532,35 +572,41 @@ function renderEntity({ e, c, count }) {
     <div class="cell" style="justify-content:center"><span class="chev ${open?'open':''}">▶</span></div>
     <div class="cell" style="padding-left:${indent}px"><span style="overflow:hidden;text-overflow:ellipsis">${x(e.name)}${sub}</span></div>
     <div class="cell cell-txt">${x(e.entity_type)}</div>
-    <div class="cell"></div>
     <div class="cell cell-txt">${count} deliverables</div>
-    <div class="cell"></div>
-    <div class="cell"></div>
+    <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+    <div class="cell"></div><div class="cell"></div><div class="cell"></div>
   </div>`
 }
 
 function renderDel({ d, mode }) {
-  const flash = recentlyUpdated.has(d.id) ? ' flash' : ''
+  const flash  = recentlyUpdated.has(d.id) ? ' flash' : ''
   const indent = mode === 'both' ? 48 : (mode === 'client' || mode === 'entity') ? 28 : 12
-  const sub = mode === 'flat'   ? `<span class="cell-sub">${x(d.entityName)} · ${x(d.clientName)}</span>`
-            : mode === 'client' ? `<span class="cell-sub">${x(d.entityName)}</span>` : ''
-  const col = mode === 'flat' ? COL_FLAT : COL_TREE
+  const sub    = mode === 'flat'   ? `<span class="cell-sub">${x(d.entityName)} · ${x(d.clientName)}</span>`
+               : mode === 'client' ? `<span class="cell-sub">${x(d.entityName)}</span>` : ''
+  const col    = mode === 'flat' ? COL_FLAT : COL_TREE
+  const cx     = CX[d.complexity]  || ['?','cx-med']
+  const ef     = EF[d.e_file_status] || ['?','ef-na']
+  const flags  = `${d.farmer ? ' <span style="font-size:10px" title="Farmer">🌾</span>' : ''}${d.us_resident ? ' <span style="font-size:10px" title="US Resident">🇺🇸</span>' : ''}`
 
   if (mode === 'flat') return `<div class="row r-del${flash}" style="grid-template-columns:${col}" data-did="${d.id}">
-    <div class="cell" style="padding-left:12px"><span style="overflow:hidden;text-overflow:ellipsis">${x(d.type)}${sub}</span></div>
-    <div class="cell cell-txt">${x(d.entityType)}</div>
+    <div class="cell" style="padding-left:12px"><span style="overflow:hidden;text-overflow:ellipsis">${x(d.type)}${flags}${sub}</span></div>
+    <div class="cell cell-txt">${x(d.service_line)}</div>
     <div class="cell cell-txt">${x(d.period)}</div>
+    <div class="cell"><span class="badge ${cx[1]}">${cx[0]}</span></div>
     <div class="cell"><span class="badge s-${d.status}">${SL[d.status]}</span></div>
+    <div class="cell"><span class="badge ${ef[1]}">${ef[0]}</span></div>
     <div class="cell cell-txt">${x(d.due_date)}</div>
     <div class="cell cell-txt">${x(d.assigned_to)}</div>
   </div>`
 
   return `<div class="row r-del${flash}" style="grid-template-columns:${col}" data-did="${d.id}">
     <div class="cell"></div>
-    <div class="cell" style="padding-left:${indent}px"><span style="overflow:hidden;text-overflow:ellipsis">${x(d.type)}${sub}</span></div>
-    <div class="cell cell-txt">${x(d.entityType)}</div>
+    <div class="cell" style="padding-left:${indent}px"><span style="overflow:hidden;text-overflow:ellipsis">${x(d.type)}${flags}${sub}</span></div>
+    <div class="cell cell-txt">${x(d.service_line)}</div>
     <div class="cell cell-txt">${x(d.period)}</div>
+    <div class="cell"><span class="badge ${cx[1]}">${cx[0]}</span></div>
     <div class="cell"><span class="badge s-${d.status}">${SL[d.status]}</span></div>
+    <div class="cell"><span class="badge ${ef[1]}">${ef[0]}</span></div>
     <div class="cell cell-txt">${x(d.due_date)}</div>
     <div class="cell cell-txt">${x(d.assigned_to)}</div>
   </div>`
@@ -571,10 +617,10 @@ function updateHeaders() {
   const head = document.getElementById('tableHead')
   if (groupMode === 'none') {
     head.style.gridTemplateColumns = COL_FLAT
-    head.innerHTML = `<div class="th">Deliverable · Entity · Client</div><div class="th">Entity Type</div><div class="th">Period</div><div class="th">Status</div><div class="th">Due Date</div><div class="th">Assigned To</div>`
+    head.innerHTML = `<div class="th">Deliverable</div><div class="th">Service Line</div><div class="th">Period</div><div class="th">Complexity</div><div class="th">Status</div><div class="th">E-File</div><div class="th">Due Date</div><div class="th">Assigned To</div>`
   } else {
     head.style.gridTemplateColumns = COL_TREE
-    head.innerHTML = `<div class="th"></div><div class="th">Name</div><div class="th">Detail</div><div class="th">Period / Region</div><div class="th">Status / Count</div><div class="th">Count</div><div class="th">Assigned To</div>`
+    head.innerHTML = `<div class="th"></div><div class="th">Name</div><div class="th">Type / Detail</div><div class="th">Service Line</div><div class="th">Period</div><div class="th">Complexity</div><div class="th">Status</div><div class="th">E-File</div><div class="th">Due Date</div><div class="th">Assigned To</div>`
   }
 }
 
@@ -613,12 +659,17 @@ function toggleStatus(s) {
   rebuildAndRender()
 }
 
-function setRegion(val) { activeRegion = val; rebuildAndRender() }
+function setRegion(val)       { activeRegion      = val; rebuildAndRender() }
+function setServiceLine(val)  { activeServiceLine = val; rebuildAndRender() }
+function setComplexity(val)   { activeComplexity  = val; rebuildAndRender() }
 
 function populateRegionFilter() {
   const sel = document.getElementById('regionSelect')
   const cur = sel.value
   sel.innerHTML = '<option value="">All regions</option>' + allRegions.map(r => `<option value="${x(r)}" ${r===cur?'selected':''}>${x(r)}</option>`).join('')
+  const sl = document.getElementById('slSelect')
+  const slCur = sl.value
+  sl.innerHTML = '<option value="">All service lines</option>' + allServiceLines.map(s => `<option value="${x(s)}" ${s===slCur?'selected':''}>${x(s)}</option>`).join('')
 }
 
 // ── Toolbar counts ─────────────────────────────────────────────────

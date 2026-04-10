@@ -364,6 +364,8 @@ let groupMode = 'flat'
 let expandedClients = new Set()
 let expandedEntities = new Set()
 let treeClients = []      // [{id, name, entities: [{id, name, rows:[]}]}]
+let seenClients  = new Set()   // clients ever loaded — only auto-expand on first appearance
+let seenEntities = new Set()   // entities ever loaded — same
 
 // Filter state
 let fOffice = '', fTaxYear = '', fServiceType = '', fStatus = '', fComplexity = '', fFilingType = ''
@@ -439,6 +441,7 @@ function onColumnsChanged() {
   visibleRows = []
   cursor = null
   hasMore = true
+  seenClients.clear(); seenEntities.clear()
   rebuildHeader()
   renderRows()
   fetchBatch()
@@ -514,10 +517,15 @@ function loadMore() {
   fetchBatch()
 }
 
+const MIN_GROUPS = 30  // minimum top-level client groups before stopping in tree mode
+
 function checkThreshold() {
   if (!hasMore || isFetching) return
   if (filteredRows.length >= VISIBLE_TARGET) return
-  fetchBatch()   // always fetch more if under target and more available
+  // In tree modes ensure enough top-level groups are loaded so collapse doesn't
+  // leave the viewport near-empty and re-trigger fetching on every render
+  if (groupMode !== 'flat' && treeClients.length >= MIN_GROUPS) return
+  fetchBatch()
 }
 
 // ── Filters ────────────────────────────────────────────────────────
@@ -536,6 +544,7 @@ function applyFilters(fromUser = false) {
     visibleRows = []
     cursor = null
     hasMore = true
+    seenClients.clear(); seenEntities.clear()
     document.getElementById('viewport').scrollTop = 0
     rebuildHeader()
     renderRows()
@@ -585,6 +594,7 @@ function setSort(col) {
   visibleRows = []
   cursor = null
   hasMore = true
+  seenClients.clear(); seenEntities.clear()
   rebuildHeader()
   renderRows()
   fetchBatch()
@@ -620,10 +630,18 @@ function buildTree(rows) {
     }))
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  // Auto-expand all on tree build
+  // Auto-expand only nodes seen for the first time
   for (const c of treeClients) {
-    expandedClients.add(c.id)
-    for (const e of c.entities) expandedEntities.add(e.id)
+    if (!seenClients.has(c.id)) {
+      seenClients.add(c.id)
+      expandedClients.add(c.id)
+    }
+    for (const e of c.entities) {
+      if (!seenEntities.has(e.id)) {
+        seenEntities.add(e.id)
+        expandedEntities.add(e.id)
+      }
+    }
   }
 }
 
@@ -770,10 +788,12 @@ function renderRows() {
   const startIdx  = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN)
   const endIdx    = Math.min(visibleRows.length, Math.ceil((scrollTop + viewH) / ROW_H) + OVERSCAN)
 
-  // Trigger load-more when within 250 rows of the bottom of loaded data
+  // Trigger load-more when scrolled within 250 rows of bottom — but only when
+  // content overflows the viewport (prevents firing when tree is collapsed and
+  // all headers fit on screen without scrolling)
   if (hasMore && !isFetching && visibleRows.length > 0) {
-    const currentRow = Math.ceil((scrollTop + viewH) / ROW_H)
-    if (currentRow >= visibleRows.length - 250) fetchBatch()
+    const contentH = visibleRows.length * ROW_H
+    if (contentH > viewH && scrollTop + viewH >= contentH - 250 * ROW_H) fetchBatch()
   }
 
   const renderKey = `${startIdx}-${endIdx}-${visCols.join(',')}-${visibleRows.length}-${groupMode}`

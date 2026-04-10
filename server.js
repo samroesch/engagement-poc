@@ -370,8 +370,9 @@ const COLS = [
   'is_in_rollforward_queue','is_bulk_milestone_moving','business_number','has_tax_dashboard'
 ]
 const NUM_COLS   = COLS.length
-const TARGET     = parseInt(process.env.SEED_TARGET)     || 100000
-const BATCH_SIZE = parseInt(process.env.SEED_BATCH_SIZE) || (TARGET > 100000 ? 1000 : 200)
+const MAX_BATCH  = Math.floor(65535 / NUM_COLS)  // PostgreSQL hard limit: 65535 params per query
+const TARGET     = parseInt(process.env.SEED_TARGET) || 100000
+const BATCH_SIZE = Math.min(parseInt(process.env.SEED_BATCH_SIZE) || 200, MAX_BATCH)
 
 async function seed() {
   // Use a dedicated client so pool errors don't interfere

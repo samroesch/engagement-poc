@@ -138,16 +138,30 @@ CREATE TABLE IF NOT EXISTS engagement (
   has_tax_dashboard                   BOOLEAN
 );
 ALTER TABLE engagement ADD COLUMN IF NOT EXISTS entity_name VARCHAR(255);
-CREATE INDEX IF NOT EXISTS idx_eng_client_id  ON engagement(client_id);
-CREATE INDEX IF NOT EXISTS idx_eng_entity_id  ON engagement(entity_id);
+
+-- Single-column indexes: equality filters and basic sorts
+CREATE INDEX IF NOT EXISTS idx_eng_client_id   ON engagement(client_id);
+CREATE INDEX IF NOT EXISTS idx_eng_entity_id   ON engagement(entity_id);
 CREATE INDEX IF NOT EXISTS idx_eng_entity_name ON engagement(entity_name);
-CREATE INDEX IF NOT EXISTS idx_eng_due_date   ON engagement(due_date);
-CREATE INDEX IF NOT EXISTS idx_eng_status_id  ON engagement(status_id);
-CREATE INDEX IF NOT EXISTS idx_eng_office     ON engagement(office);
-CREATE INDEX IF NOT EXISTS idx_eng_tax_year   ON engagement(tax_year);
-CREATE INDEX IF NOT EXISTS idx_eng_svc_type   ON engagement(service_type);
-CREATE INDEX IF NOT EXISTS idx_eng_is_active  ON engagement(is_active);
-CREATE INDEX IF NOT EXISTS idx_eng_msd        ON engagement(milestone_start_date);
+CREATE INDEX IF NOT EXISTS idx_eng_status_id   ON engagement(status_id);
+CREATE INDEX IF NOT EXISTS idx_eng_office      ON engagement(office);
+CREATE INDEX IF NOT EXISTS idx_eng_tax_year    ON engagement(tax_year);
+CREATE INDEX IF NOT EXISTS idx_eng_svc_type    ON engagement(service_type);
+CREATE INDEX IF NOT EXISTS idx_eng_filing_type ON engagement(filing_type);
+CREATE INDEX IF NOT EXISTS idx_eng_is_active   ON engagement(is_active);
+CREATE INDEX IF NOT EXISTS idx_eng_msd         ON engagement(milestone_start_date);
+
+-- Composite indexes: cover the cursor pagination tiebreak (sort_col, id)
+-- so the keyset cursor condition (sort_col, id) > (val, id) is a pure index scan
+CREATE INDEX IF NOT EXISTS idx_eng_due_date_id ON engagement(due_date NULLS LAST, id);
+
+-- Composite indexes: filter column leading, sort column trailing
+-- These allow PostgreSQL to satisfy WHERE filter + ORDER BY sort with one index scan
+CREATE INDEX IF NOT EXISTS idx_eng_status_due   ON engagement(status_id,   due_date NULLS LAST, id);
+CREATE INDEX IF NOT EXISTS idx_eng_office_due   ON engagement(office,      due_date NULLS LAST, id);
+CREATE INDEX IF NOT EXISTS idx_eng_svctype_due  ON engagement(service_type,due_date NULLS LAST, id);
+CREATE INDEX IF NOT EXISTS idx_eng_taxyear_due  ON engagement(tax_year,    due_date NULLS LAST, id);
+CREATE INDEX IF NOT EXISTS idx_eng_filing_due   ON engagement(filing_type, due_date NULLS LAST, id);
 `
 
 // ── Seed data helpers ─────────────────────────────────────────────
@@ -356,8 +370,8 @@ const COLS = [
   'is_in_rollforward_queue','is_bulk_milestone_moving','business_number','has_tax_dashboard'
 ]
 const NUM_COLS   = COLS.length
-const TARGET     = 100000
-const BATCH_SIZE = 200
+const TARGET     = parseInt(process.env.SEED_TARGET)     || 100000
+const BATCH_SIZE = parseInt(process.env.SEED_BATCH_SIZE) || (TARGET > 100000 ? 1000 : 200)
 
 async function seed() {
   // Use a dedicated client so pool errors don't interfere
@@ -366,11 +380,14 @@ async function seed() {
   try {
     await client.query(SCHEMA)
 
+    // Skip re-seed if already seeded to (at least) the configured target
     const ver = await client.query("SELECT value FROM meta WHERE key='seed_version'")
     if (ver.rows[0]?.value === 'v2') {
       const cnt = await client.query('SELECT COUNT(*) AS c FROM engagement')
-      console.log(`DB ready — ${Number(cnt.rows[0].c).toLocaleString()} engagements`)
-      return
+      const existing = Number(cnt.rows[0].c)
+      console.log(`DB ready — ${existing.toLocaleString()} engagements`)
+      if (existing >= TARGET) return
+      console.log(`Target is ${TARGET.toLocaleString()} but only ${existing.toLocaleString()} rows exist — reseeding…`)
     }
 
     console.log('Truncating any partial data…')

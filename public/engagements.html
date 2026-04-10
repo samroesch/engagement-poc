@@ -770,6 +770,12 @@ function renderRows() {
   const startIdx  = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN)
   const endIdx    = Math.min(visibleRows.length, Math.ceil((scrollTop + viewH) / ROW_H) + OVERSCAN)
 
+  // Trigger load-more when within 250 rows of the bottom of loaded data
+  if (hasMore && !isFetching && visibleRows.length > 0) {
+    const currentRow = Math.ceil((scrollTop + viewH) / ROW_H)
+    if (currentRow >= visibleRows.length - 250) fetchBatch()
+  }
+
   const renderKey = `${startIdx}-${endIdx}-${visCols.join(',')}-${visibleRows.length}-${groupMode}`
   if (renderKey === lastRenderKey) return
   lastRenderKey = renderKey

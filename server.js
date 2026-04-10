@@ -395,8 +395,12 @@ async function seed() {
     await client.query('TRUNCATE TABLE engagement RESTART IDENTITY')
     await client.query("DELETE FROM meta WHERE key='seed_version'")
 
+    // Reduce WAL pressure: skip fsync per commit (data still safe on checkpoint)
+    await client.query('SET synchronous_commit = OFF')
+
     console.log(`Seeding ${TARGET.toLocaleString()} engagement rows…`)
     let inserted = 0
+    const CHECKPOINT_INTERVAL = 50000  // flush WAL every 50k rows to avoid disk fill
     while (inserted < TARGET) {
       const size = Math.min(BATCH_SIZE, TARGET - inserted)
       const rows = Array.from({ length: size }, makeRow)
@@ -410,6 +414,12 @@ async function seed() {
       inserted += size
       if (inserted % 10000 === 0 || inserted === TARGET)
         console.log(`  ${inserted.toLocaleString()} / ${TARGET.toLocaleString()}`)
+      // Force checkpoint to flush WAL and reclaim disk space
+      if (inserted % CHECKPOINT_INTERVAL === 0) {
+        process.stdout.write('  [checkpoint] ')
+        await client.query('CHECKPOINT')
+        console.log('done')
+      }
     }
 
     await client.query("INSERT INTO meta VALUES ('seed_version','v2') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value")

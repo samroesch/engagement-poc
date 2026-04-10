@@ -17,8 +17,9 @@
     a:hover { text-decoration: underline; }
 
     .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 40px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 10; }
-    .topbar-title { font-size: 14px; font-weight: 600; color: var(--muted); }
-    .topbar-nav { display: flex; gap: 20px; font-size: 13px; }
+    .topbar-title { font-size: 14px; font-weight: 600; color: var(--muted); text-decoration: none; }
+    .topbar-title:hover { color: var(--text); text-decoration: none; }
+    .topbar-nav { display: flex; gap: 20px; font-size: 13px; align-items: center; }
     .topbar-nav a { color: var(--muted); }
     .topbar-nav a:hover { color: var(--text); text-decoration: none; }
     .topbar-nav a.active { color: var(--text); font-weight: 600; }
@@ -128,10 +129,12 @@
 <body>
 
 <div class="topbar">
-  <span class="topbar-title">Engagement Data POC</span>
+  <a href="index.html" class="topbar-title">Engagement Data POC</a>
   <nav class="topbar-nav">
-    <a href="engagement.html">Live Demo</a>
-    <a href="architecture.html" class="active">Architecture</a>
+    <span style="font-size:11px;color:var(--red);font-weight:700;border:1px solid var(--red)44;border-radius:4px;padding:2px 8px">V1 Legacy</span>
+    <a href="engagement.html">Demo</a>
+    <a href="architecture.html" class="active">Docs</a>
+    <a href="architecture-v2.html">V2 Docs →</a>
   </nav>
 </div>
 

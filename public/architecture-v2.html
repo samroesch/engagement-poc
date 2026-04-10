@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>V2 Architecture — Engagement Data POC</title>
+  <style>
+    :root {
+      --bg: #0e0e11; --surface: #1a1a1f; --surface2: #222228; --border: #2e2e36;
+      --text: #e8e8ed; --muted: #6e6e7a;
+      --green: #32d74b; --amber: #ffd60a; --red: #ff453a; --blue: #4a9eff; --purple: #bf5af2;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 40px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 10; }
+    .topbar-title { font-size: 14px; font-weight: 600; color: var(--muted); text-decoration: none; }
+    .topbar-title:hover { color: var(--text); text-decoration: none; }
+    .topbar-nav { display: flex; gap: 20px; font-size: 13px; align-items: center; }
+    .topbar-nav a { color: var(--muted); }
+    .topbar-nav a:hover { color: var(--text); text-decoration: none; }
+    .topbar-nav a.active { color: var(--text); font-weight: 600; }
+
+    .page { max-width: 900px; margin: 0 auto; padding: 48px 40px 80px; }
+
+    /* Section headings */
+    .section { margin-bottom: 56px; }
+    .section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--blue); margin-bottom: 10px; }
+    h1 { font-size: 32px; font-weight: 800; letter-spacing: -1px; line-height: 1.2; margin-bottom: 14px; }
+    h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 10px; }
+    h3 { font-size: 15px; font-weight: 700; margin-bottom: 8px; color: var(--text); }
+    p { color: #c0c0cc; font-size: 15px; margin-bottom: 12px; }
+    p:last-child { margin-bottom: 0; }
+    .lead { font-size: 17px; color: var(--text); line-height: 1.7; }
+
+    /* Flow diagrams */
+    .flow { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px 32px; margin: 20px 0; font-size: 13px; }
+    .flow-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 20px; }
+    .flow.bad  { border-color: var(--red)33; }
+    .flow.good { border-color: var(--green)33; }
+
+    .layer { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 6px; }
+    .layer-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; margin-top: 2px; }
+    .layer-icon.browser { background: var(--blue)22; }
+    .layer-icon.server  { background: var(--amber)22; }
+    .layer-icon.db      { background: var(--purple)22; }
+    .layer-body { flex: 1; }
+    .layer-name { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 4px; }
+    .layer-detail { color: var(--text); font-size: 13px; line-height: 1.5; }
+    .layer-detail code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 12px; font-family: 'SF Mono', 'Cascadia Code', monospace; color: var(--amber); }
+    .layer-detail .tag-good { color: var(--green); font-weight: 700; }
+    .layer-detail .tag-note { color: var(--muted); font-size: 12px; }
+
+    .flow-arrow { text-align: left; padding-left: 52px; color: var(--border); font-size: 18px; line-height: 1; margin: 2px 0; }
+    .flow-divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+
+    /* Comparison table */
+    .compare-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 20px 0; }
+    .compare-table th { text-align: left; padding: 10px 14px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); background: var(--surface2); border-bottom: 1px solid var(--border); }
+    .compare-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .compare-table tr:last-child td { border-bottom: none; }
+    .compare-table tr:hover td { background: var(--surface); }
+    .compare-table .metric { font-weight: 600; color: var(--text); white-space: nowrap; }
+    .compare-table .val-bad  { color: var(--red); font-weight: 700; }
+    .compare-table .val-good { color: var(--green); font-weight: 700; }
+    .compare-table .val-warn { color: var(--amber); font-weight: 700; }
+    .compare-table .note { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+    /* Code blocks */
+    .code-block { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin: 16px 0; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; font-size: 12.5px; line-height: 1.7; overflow-x: auto; }
+    .code-block .cmt  { color: var(--muted); }
+    .code-block .kw   { color: var(--purple); }
+    .code-block .str  { color: var(--green); }
+    .code-block .fn   { color: var(--blue); }
+    .code-block .num  { color: var(--amber); }
+    .code-block .bad  { color: var(--red); }
+    .code-block .good { color: var(--green); }
+
+    /* Callout */
+    .callout { border-left: 3px solid var(--blue); background: var(--blue)0d; border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 20px 0; font-size: 14px; color: #c8d8f0; line-height: 1.6; }
+    .callout strong { color: var(--text); }
+    .callout.warn { border-left-color: var(--amber); background: var(--amber)0d; color: #e8d898; }
+    .callout.warn strong { color: var(--amber); }
+    .callout.good { border-left-color: var(--green); background: var(--green)0d; color: #a8e8b8; }
+
+    /* Subsection */
+    .subsection { margin-bottom: 36px; }
+    .subsection-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--amber); margin-bottom: 12px; }
+
+    @media (max-width: 680px) {
+      .page { padding: 32px 20px 60px; }
+      .topbar { padding: 12px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="index.html" class="topbar-title">Engagement Data POC</a>
+  <nav class="topbar-nav">
+    <span style="font-size:11px;color:var(--green);font-weight:700;border:1px solid var(--green)44;border-radius:4px;padding:2px 8px">V2</span>
+    <a href="engagements.html">Demo</a>
+    <a href="architecture-v2.html" class="active">Docs</a>
+    <a href="architecture.html">V1 Docs</a>
+  </nav>
+</div>
+
+<div class="page">
+
+  <!-- ── Section 1: Intro ──────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-label">V2 Architecture</div>
+    <h1>V2: PostgreSQL + Progressive Loading</h1>
+    <p class="lead">V2 builds on the V1 proof-of-concept by replacing the local SQLite database with a real PostgreSQL instance, introducing partial/progressive data loading, server-side filtering, a collapsible tree view, and dynamic column selection.</p>
+    <p>Where V1 demonstrated that a single flat JOIN query is far faster than N+1 waterfall fetching, V2 applies that same principle at real scale — 100,000 rows seeded from the production engagement schema — and solves the problems that emerge when you can't (or shouldn't) load everything at once.</p>
+  </div>
+
+  <!-- ── Section 2: What Changed from V1 ─────────────────────────── -->
+  <div class="section">
+    <div class="section-label">Changes</div>
+    <h2>What Changed from V1</h2>
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th>V1</th>
+          <th>V2</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="metric">Database</td>
+          <td>SQLite (local file)</td>
+          <td class="val-good">PostgreSQL (Railway, production-equivalent)</td>
+        </tr>
+        <tr>
+          <td class="metric">Data load</td>
+          <td>Full stream on every load</td>
+          <td class="val-good">First 1,000 rows, load more on demand</td>
+        </tr>
+        <tr>
+          <td class="metric">Filters</td>
+          <td>Client-side only</td>
+          <td class="val-good">Client-side instant + server-side continuation</td>
+        </tr>
+        <tr>
+          <td class="metric">Sort</td>
+          <td>Server re-query (flat) / client-side (tree)</td>
+          <td class="val-good">Same, but cursor-based pagination</td>
+        </tr>
+        <tr>
+          <td class="metric">Column selection</td>
+          <td>All columns always transmitted</td>
+          <td class="val-good">Dynamic SELECT — only requested columns transmitted</td>
+        </tr>
+        <tr>
+          <td class="metric">Tree view</td>
+          <td>Full data loaded before tree builds</td>
+          <td class="val-good">Tree builds progressively as stream arrives</td>
+        </tr>
+        <tr>
+          <td class="metric">Scale</td>
+          <td>100K rows, full load</td>
+          <td class="val-good">100K rows, partial load with cursor pagination</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── Section 3: Schema ─────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-label">Schema</div>
+    <h2>Schema — What's Different from Production</h2>
+    <p class="lead">This is the most important section for the team. The POC schema is faithful to production but differs in four specific ways.</p>
+
+    <div class="subsection" style="margin-top:28px">
+      <div class="subsection-label">A — Column additions (not in production)</div>
+      <p>Two columns exist in the POC that do not exist in the production engagement table:</p>
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>Column</th>
+            <th>Purpose in POC</th>
+            <th>Production equivalent</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="metric"><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--amber)">entity_name VARCHAR(255)</code></td>
+            <td>Supports tree view grouping — used to label entity rows without a separate query</td>
+            <td>Comes from a JOIN to the entities table. In a real implementation this would be <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--amber)">LEFT JOIN entities ON entity_id = entities.id</code></td>
+          </tr>
+          <tr>
+            <td class="metric"><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--amber)">meta (key, value)</code></td>
+            <td>Internal table used only for seed version tracking</td>
+            <td>Not part of the engagement schema at all</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">B — Column naming — normalized to snake_case</div>
+      <p>Production schema uses mixed casing (PascalCase and inconsistent conventions). For PostgreSQL compatibility and readability, all columns were normalized to <strong style="color:var(--text)">snake_case</strong>. The mapping is mechanical — no data was changed.</p>
+      <div class="callout warn">
+        <strong>One special case:</strong> <code style="font-family:'SF Mono','Cascadia Code',monospace;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 6px">7216Consent</code> was renamed to <code style="font-family:'SF Mono','Cascadia Code',monospace;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 6px">consent_7216</code> because SQL column names cannot begin with a digit.
+      </div>
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>Production (Azure SQL)</th>
+            <th>POC (PostgreSQL)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">IBS_Engagement_Code</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">ibs_engagement_code</code></td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">IsAmended</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">is_amended</code></td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">IsExceptionApproved</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">is_exception_approved</code></td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">IsFormMissing</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">is_form_missing</code></td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">EngagementHold</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">engagement_hold</code></td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">7216Consent</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--amber)">consent_7216</code> <span style="font-size:11px;color:var(--muted)">(renamed — digit prefix)</span></td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">SAN</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">san</code></td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">SAN_activation_date</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">san_activation_date</code></td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">HasIfirmUrl</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">has_ifirm_url</code></td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">HasTaxDashboard</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">has_tax_dashboard</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">C — Type mapping — Azure SQL to PostgreSQL</div>
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>Azure SQL Type</th>
+            <th>PostgreSQL Type</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">BIT</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">BOOLEAN</code></td><td class="note"><code style="font-family:'SF Mono','Cascadia Code',monospace">true</code>/<code style="font-family:'SF Mono','Cascadia Code',monospace">false</code> instead of <code style="font-family:'SF Mono','Cascadia Code',monospace">1</code>/<code style="font-family:'SF Mono','Cascadia Code',monospace">0</code></td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">DATETIME2</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">TIMESTAMPTZ</code></td><td class="note">Includes timezone offset</td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">INT IDENTITY</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">SERIAL</code></td><td class="note">Auto-increment primary key</td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">NVARCHAR(MAX)</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">TEXT</code></td><td class="note">Unbounded text — used for JSON arrays (efilers, reviewers, etc.)</td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">NVARCHAR(n)</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">VARCHAR(n)</code></td><td class="note">Same semantics, different vendor keyword</td></tr>
+          <tr><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">UNIQUEIDENTIFIER</code></td><td><code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;color:var(--green)">UUID</code></td><td class="note">Same concept, different syntax</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">D — What's the same</div>
+      <div class="callout good">
+        All business columns, relationships, and data semantics are identical. The schema represents the same engagement data model — just in PostgreSQL syntax with normalized naming. Every column that exists in production exists in the POC. No fields were dropped or merged.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 4: Progressive Loading ───────────────────────────── -->
+  <div class="section">
+    <div class="section-label">Loading Strategy</div>
+    <h2>Progressive Loading</h2>
+    <p>Rather than streaming all 100,000 rows on every page load, V2 uses a 1,000-row buffer strategy. The UI is usable within milliseconds of opening the page.</p>
+
+    <div class="flow good" style="margin-top:20px">
+      <div class="flow-title">Progressive load flow</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">&#128187;</div>
+        <div class="layer-body">
+          <div class="layer-name">Initial load</div>
+          <div class="layer-detail">Request first 1,000 rows (no cursor). Tree and flat view build progressively as rows stream in. Top of list appears populated almost immediately.</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#8595;</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">&#128187;</div>
+        <div class="layer-body">
+          <div class="layer-name">Filter applied</div>
+          <div class="layer-detail">Client instantly filters already-loaded rows. Result appears with <span class="tag-good">zero network latency</span>.</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#8595;</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">&#128187;</div>
+        <div class="layer-body">
+          <div class="layer-name">Threshold check</div>
+          <div class="layer-detail">If visible rows &lt; 1,000 AND server has more rows: auto-fetch next batch with server-side filters applied (WHERE clause pushed to DB).</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#8595;</div>
+
+      <div class="layer">
+        <div class="layer-icon server">&#9881;&#65039;</div>
+        <div class="layer-body">
+          <div class="layer-name">Server fetch with filters</div>
+          <div class="layer-detail">Server executes <code>SELECT ... WHERE office = $1 AND tax_year = $2 AND id &gt; $3 ORDER BY ... LIMIT 1000</code> — cursor-based, filtered.</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#8595;</div>
+
+      <div class="layer">
+        <div class="layer-icon browser">&#128187;</div>
+        <div class="layer-body">
+          <div class="layer-name">Merge and re-filter</div>
+          <div class="layer-detail">New rows merged into client store. Client filter re-applied. Threshold checked again. Process repeats until 1,000 visible rows or server exhausted.</div>
+        </div>
+      </div>
+
+      <hr class="flow-divider">
+      <div class="layer">
+        <div class="layer-icon db">&#128190;</div>
+        <div class="layer-body">
+          <div class="layer-name">Sort change</div>
+          <div class="layer-detail">Cursor resets. Server refetches from beginning with new <code>ORDER BY</code>. Client store cleared and rebuilt from new stream.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 5: Cursor-Based Pagination ───────────────────────── -->
+  <div class="section">
+    <div class="section-label">Pagination</div>
+    <h2>Cursor-Based Pagination</h2>
+    <p>Traditional OFFSET pagination scans and discards rows on every page request. At 50,000 rows in, the database does 50,000 units of work it throws away. Cursor (keyset) pagination jumps directly to the right position using indexes.</p>
+
+    <div class="code-block">
+<span class="cmt">-- OFFSET approach (bad at scale)</span>
+<span class="bad">SELECT ... FROM engagement ORDER BY due_date LIMIT 1000 OFFSET 50000</span>
+<span class="cmt">-- DB scans and discards 50,000 rows every time</span>
+
+<span class="cmt">-- Keyset cursor (good)</span>
+<span class="good">SELECT ... FROM engagement
+WHERE due_date &gt; '2025-06-14' OR (due_date = '2025-06-14' AND id &gt; 4821)
+ORDER BY due_date ASC, id ASC LIMIT 1000</span>
+<span class="cmt">-- Jumps directly to the right position using indexes</span>
+    </div>
+
+    <div class="callout">
+      <strong>Cursor encoding:</strong> The cursor is a base64-encoded JSON object <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">{"id": 4821, "val": "2025-06-14"}</code> passed as the <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">?after=</code> query parameter. It encodes the sort key value and row ID of the last row seen. The cursor resets on any sort change or when filters change significantly.
+    </div>
+
+    <p>The tie-breaking <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">id</code> condition ensures stable pagination when multiple rows share the same sort key value — without it, rows at sort key boundaries could be skipped or duplicated.</p>
+  </div>
+
+  <!-- ── Section 6: Server-Side Filters ───────────────────────────── -->
+  <div class="section">
+    <div class="section-label">Filtering</div>
+    <h2>Server-Side Filters</h2>
+    <p>All filter values are passed as parameterized query parameters, never interpolated into SQL strings. Column names are validated against a server-side whitelist before being included in the WHERE clause.</p>
+
+    <div class="code-block">
+<span class="cmt">-- Example: office + tax_year filter with cursor</span>
+<span class="kw">SELECT</span> id, engagement_name, client_name, office, tax_year, due_date
+<span class="kw">FROM</span> engagement
+<span class="kw">WHERE</span> office = <span class="str">$1</span> <span class="kw">AND</span> tax_year = <span class="str">$2</span> <span class="kw">AND</span> id &gt; <span class="str">$3</span>
+<span class="kw">ORDER BY</span> id <span class="kw">ASC</span> <span class="kw">LIMIT</span> <span class="str">$4</span>
+<span class="cmt">-- All filter values are parameterized — never interpolated into SQL</span>
+    </div>
+
+    <p>Filterable columns and their indexes:</p>
+    <table class="compare-table">
+      <thead>
+        <tr><th>Column</th><th>Index</th><th>Type</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="metric">office</td><td class="val-good">idx_eng_office</td><td>Exact match</td></tr>
+        <tr><td class="metric">tax_year</td><td class="val-good">idx_eng_tax_year</td><td>Exact match</td></tr>
+        <tr><td class="metric">service_type</td><td class="val-good">idx_eng_svc_type</td><td>Exact match</td></tr>
+        <tr><td class="metric">status_id</td><td class="val-good">idx_eng_status_id</td><td>Exact match</td></tr>
+        <tr><td class="metric">complexity</td><td class="note">table scan (low cardinality)</td><td>Exact match</td></tr>
+        <tr><td class="metric">filing_type</td><td class="note">table scan (low cardinality)</td><td>Exact match</td></tr>
+        <tr><td class="metric">entity_type</td><td class="note">table scan (low cardinality)</td><td>Exact match</td></tr>
+        <tr><td class="metric">is_active</td><td class="val-good">idx_eng_is_active</td><td>Boolean</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>SQL injection prevention:</strong> Column names are validated against a <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">VALID_COLS</code> Set on the server before being used in any query. Filter values are always passed as positional parameters (<code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">$1, $2, ...</code>) — never string-concatenated into SQL.
+    </div>
+  </div>
+
+  <!-- ── Section 7: Dynamic Column Selection ──────────────────────── -->
+  <div class="section">
+    <div class="section-label">Bandwidth</div>
+    <h2>Dynamic Column Selection</h2>
+    <p>The production engagement schema has 100+ columns, including large TEXT fields that store JSON arrays for efilers, reviewers, preparers, and other staff lists. Transmitting all columns when the user has 15 visible wastes 5–10x bandwidth.</p>
+
+    <p>The client sends a <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">?columns=</code> parameter listing only the columns currently shown. The server validates each column name against the whitelist and constructs a targeted SELECT.</p>
+
+    <div class="code-block">
+<span class="cmt">Client: ?columns=engagement_name,client_name,office,due_date,status_id</span>
+
+<span class="cmt">Server: validates each against VALID_COLS Set</span>
+<span class="kw">SELECT</span> id, engagement_name, client_name, office, due_date, status_id
+<span class="kw">FROM</span> engagement ...
+<span class="cmt">-- id always included (needed for cursor and row identity)</span>
+    </div>
+
+    <p>The column picker sidebar in the UI lets users show or hide any column. Changes trigger a new stream request with the updated column list — the cursor is preserved so the user stays at the same scroll position.</p>
+  </div>
+
+  <!-- ── Section 8: Tree View ──────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-label">Tree View</div>
+    <h2>Tree View</h2>
+    <p>The tree is built entirely client-side from the flat row stream — same technique as V1, now running on the real production schema. No separate queries are issued per client or entity.</p>
+
+    <div class="flow good">
+      <div class="flow-title">Tree build process</div>
+      <div class="layer">
+        <div class="layer-icon server">&#9881;&#65039;</div>
+        <div class="layer-body">
+          <div class="layer-name">Server</div>
+          <div class="layer-detail">Streams flat rows ordered by <code>client_id, entity_id, id</code>. One row per engagement — no nesting, no duplication.</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#8595;</div>
+      <div class="layer">
+        <div class="layer-icon browser">&#128187;</div>
+        <div class="layer-body">
+          <div class="layer-name">Client — progressive grouping</div>
+          <div class="layer-detail">As rows arrive, client groups by <code>client_id → entity_id</code>. Top of list populates immediately. Expand/collapse state held in Sets — <span class="tag-good">O(1) lookup</span>.</div>
+        </div>
+      </div>
+    </div>
+
+    <p style="margin-top:16px">Four view modes are supported: <strong style="color:var(--text)">Flat</strong> (all rows, no grouping), <strong style="color:var(--text)">Client</strong> (grouped by client only), <strong style="color:var(--text)">Entity</strong> (grouped by entity only), and <strong style="color:var(--text)">Client + Entity</strong> (full two-level hierarchy).</p>
+
+    <div class="callout">
+      <strong>Contrast with production:</strong> The current production UI issues a separate query for each client node when the user expands it — the classic N+1 pattern V1 demonstrated. The V2 tree view eliminates this entirely. All grouping happens in the browser from a single flat data stream.
+    </div>
+  </div>
+
+  <!-- ── Section 9: Comparison Table ──────────────────────────────── -->
+  <div class="section">
+    <div class="section-label">Summary</div>
+    <h2>Full Comparison: V1 vs V2 vs Production</h2>
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th>V1 POC</th>
+          <th>V2 POC</th>
+          <th>Production (current)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="metric">Database</td>
+          <td>SQLite (local file)</td>
+          <td class="val-good">PostgreSQL (Railway)</td>
+          <td>Azure SQL</td>
+        </tr>
+        <tr>
+          <td class="metric">Query approach</td>
+          <td>Single flat JOIN vs N+1 demo</td>
+          <td class="val-good">Cursor-based keyset pagination</td>
+          <td class="val-bad">N+1 per client expand</td>
+        </tr>
+        <tr>
+          <td class="metric">Data loaded per session</td>
+          <td class="val-warn">All rows, every load</td>
+          <td class="val-good">First 1,000 rows, more on demand</td>
+          <td class="val-bad">Unbounded, per-expand fetches</td>
+        </tr>
+        <tr>
+          <td class="metric">Filter behaviour</td>
+          <td>Client-side only</td>
+          <td class="val-good">Client instant + server continuation</td>
+          <td class="val-bad">Full re-query from server</td>
+        </tr>
+        <tr>
+          <td class="metric">Sort behaviour</td>
+          <td>Server re-query (flat) / client (tree)</td>
+          <td class="val-good">Cursor reset + server re-query</td>
+          <td class="val-bad">Full re-query, no cursor</td>
+        </tr>
+        <tr>
+          <td class="metric">Tree / grouping</td>
+          <td class="val-good">Client-side from flat stream</td>
+          <td class="val-good">Client-side, progressive</td>
+          <td class="val-bad">N+1 per node expand</td>
+        </tr>
+        <tr>
+          <td class="metric">Column selection</td>
+          <td class="val-warn">All columns always</td>
+          <td class="val-good">Dynamic SELECT — visible columns only</td>
+          <td class="val-bad">All columns in API response</td>
+        </tr>
+        <tr>
+          <td class="metric">Scale tested</td>
+          <td>100K rows (synthetic)</td>
+          <td class="val-good">100K rows (production schema)</td>
+          <td>Production data, unknown row count</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

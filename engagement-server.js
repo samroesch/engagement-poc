@@ -1,13 +1,26 @@
+require('dotenv').config()
 const express = require('express')
 const Database = require('better-sqlite3')
 const WebSocket = require('ws')
 const http = require('http')
 const path = require('path')
+const { Pool } = require('pg')
+const Cursor = require('pg-cursor')
 
 const app = express()
 const server = http.createServer(app)
 const wss = new WebSocket.Server({ server })
-const db = new Database(path.join(__dirname, 'engagement.db'))
+
+let db
+try {
+  db = new Database(path.join(__dirname, 'engagement.db'))
+} catch (e) {
+  console.warn('better-sqlite3 binary not found — SQLite routes disabled. Run `npm install` with Python + node-gyp to restore.')
+  db = null
+}
+
+// ── SQLite schema + routes (disabled if binary missing) ───────────
+if (db) {
 
 // ── Schema migration ───────────────────────────────────────────────
 // Drop legacy tables if the extended schema (v2) isn't present yet
@@ -367,6 +380,561 @@ setInterval(() => {
   const msg = JSON.stringify({ type: 'update', id, status, ts: Date.now() })
   wss.clients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg) })
 }, 2000)
+
+} // end if (db)
+
+// ── PostgreSQL pool ───────────────────────────────────────────────
+const pgPool = new Pool({ connectionString: process.env.DATABASE_URL })
+pgPool.on('error', err => console.error('PG pool error (non-fatal):', err.message))
+process.on('unhandledRejection', err => console.error('Unhandled rejection (non-fatal):', err?.message || err))
+process.on('uncaughtException', err => console.error('Uncaught exception (non-fatal):', err?.message || err))
+
+// ── PG schema + seed ──────────────────────────────────────────────
+const PG_SCHEMA = `
+CREATE TABLE IF NOT EXISTS meta (
+  key VARCHAR(50) PRIMARY KEY,
+  value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS engagement (
+  id SERIAL PRIMARY KEY,
+  engagement_name VARCHAR(255),
+  client_id INT,
+  entity_id INT,
+  tax_year INT,
+  service_type VARCHAR(100),
+  status_id INT,
+  due_date DATE,
+  delivery_date DATE,
+  tax_year_end DATE,
+  complexity VARCHAR(50),
+  created_by INT,
+  updated_by INT,
+  created_datetime TIMESTAMPTZ,
+  updated_datetime TIMESTAMPTZ,
+  is_active BOOLEAN,
+  ibs_engagement_code VARCHAR(100),
+  caseware_filename VARCHAR(255),
+  estimated_hours DECIMAL(10,2),
+  taxprep_filename VARCHAR(255),
+  san VARCHAR(100),
+  san_activation_date DATE,
+  san_expiry_date DATE,
+  client_delivery VARCHAR(100),
+  letter_expiry_date DATE,
+  restrict_access BOOLEAN,
+  is_automatically_send_questionnaire BOOLEAN,
+  is_high_level_reviewer_required BOOLEAN,
+  is_activated BOOLEAN,
+  office VARCHAR(100),
+  send_to_crc BOOLEAN,
+  crc_duedate DATE,
+  is_office_of_partner BOOLEAN,
+  dms_py_site_location VARCHAR(500),
+  first_name VARCHAR(100),
+  last_name VARCHAR(100),
+  client_name VARCHAR(255),
+  ifirm_url VARCHAR(500),
+  client_code VARCHAR(50),
+  tax_return_processing VARCHAR(100),
+  allow_client_service_assessment BOOLEAN,
+  is_deliverable BOOLEAN,
+  filing_type VARCHAR(50),
+  preferred_name VARCHAR(100),
+  country VARCHAR(100),
+  description TEXT,
+  entity_type VARCHAR(100),
+  is_extension BOOLEAN,
+  client_milestone VARCHAR(100),
+  internal_milestone VARCHAR(100),
+  is_retention_policy BOOLEAN,
+  milestone_completed_date DATE,
+  milestone_start_date DATE,
+  engagement_hold BOOLEAN,
+  is_amended BOOLEAN,
+  is_exception_approved BOOLEAN,
+  is_form_missing BOOLEAN,
+  efilers TEXT,
+  hl_reviewers TEXT,
+  company_users TEXT,
+  partners TEXT,
+  preparers TEXT,
+  processors TEXT,
+  reviewers TEXT,
+  service_teams TEXT,
+  govt_delivery_method VARCHAR(100),
+  parent_engagement_id INT,
+  partner_names TEXT,
+  preparer_names TEXT,
+  processor_names TEXT,
+  reviewer_names TEXT,
+  company_user_names TEXT,
+  hl_reviewer_names TEXT,
+  efiler_names TEXT,
+  has_ifirm_url BOOLEAN,
+  efile_auto_failed_reason TEXT,
+  engagement_government_delivery_status VARCHAR(100),
+  print_auto_success BOOLEAN,
+  send_to_client_auto_success BOOLEAN,
+  contact_guid_id UUID,
+  is_deceased BOOLEAN,
+  is_farmer BOOLEAN,
+  is_head_of_household BOOLEAN,
+  is_paper_doc BOOLEAN,
+  extension_duedate DATE,
+  is_eng_name_same_as_entity_name BOOLEAN,
+  legal_entity_name VARCHAR(255),
+  is_milestone_email_notification_sent BOOLEAN,
+  is_roll_forwarded BOOLEAN,
+  san_updated_datetime TIMESTAMPTZ,
+  is_gen_ai_enabled BOOLEAN,
+  is_lgd BOOLEAN,
+  is_lgd_linked BOOLEAN,
+  is_lgd_frontload BOOLEAN,
+  is_incognito BOOLEAN,
+  is_deliverable_na BOOLEAN,
+  slip_volume INT,
+  is_prep_automated BOOLEAN,
+  consent_7216 BOOLEAN,
+  sin_itn VARCHAR(50),
+  ssn_itin VARCHAR(50),
+  is_automation_intake BOOLEAN,
+  lead_partners TEXT,
+  is_in_rollforward_queue BOOLEAN,
+  is_bulk_milestone_moving BOOLEAN,
+  business_number VARCHAR(50),
+  has_tax_dashboard BOOLEAN
+);
+
+CREATE INDEX IF NOT EXISTS idx_eng_client_id ON engagement(client_id);
+CREATE INDEX IF NOT EXISTS idx_eng_entity_id ON engagement(entity_id);
+CREATE INDEX IF NOT EXISTS idx_eng_due_date ON engagement(due_date);
+CREATE INDEX IF NOT EXISTS idx_eng_status_id ON engagement(status_id);
+CREATE INDEX IF NOT EXISTS idx_eng_office ON engagement(office);
+CREATE INDEX IF NOT EXISTS idx_eng_tax_year ON engagement(tax_year);
+CREATE INDEX IF NOT EXISTS idx_eng_service_type ON engagement(service_type);
+CREATE INDEX IF NOT EXISTS idx_eng_is_active ON engagement(is_active);
+CREATE INDEX IF NOT EXISTS idx_eng_milestone_start ON engagement(milestone_start_date);
+`
+
+async function pgSeedIfNeeded() {
+  const client = await pgPool.connect()
+  try {
+    await client.query(PG_SCHEMA)
+
+    const versionRow = await client.query("SELECT value FROM meta WHERE key='seed_version'")
+    if (versionRow.rows[0]?.value === 'v2') {
+      const countRow = await client.query('SELECT COUNT(*) AS c FROM engagement')
+      console.log(`PG database ready — ${parseInt(countRow.rows[0].c).toLocaleString()} engagements`)
+      return
+    }
+
+    console.log('PG: Clearing any partial data and seeding 100,000 engagement rows…')
+    await client.query('TRUNCATE TABLE engagement RESTART IDENTITY')
+    await client.query("DELETE FROM meta WHERE key='seed_version'")
+
+    // Reference data pools
+    const offices = [
+      'Toronto', 'Vancouver', 'Calgary', 'Montreal', 'Ottawa', 'Edmonton',
+      'Halifax', 'Winnipeg', 'Regina', 'Victoria', 'Saskatoon', 'London',
+      'Kitchener', 'Mississauga', 'Brampton', 'Hamilton', 'Windsor',
+      'Oakville', 'Burlington', 'Barrie', 'Sudbury', 'Thunder Bay',
+      'Kingston', 'Fredericton', 'Moncton', 'Saint John', 'Charlottetown',
+      'St. John\'s', 'Yellowknife', 'Whitehorse', 'Iqaluit',
+      'Kelowna', 'Kamloops', 'Nanaimo', 'Abbotsford', 'Surrey',
+      'Burnaby', 'Richmond', 'Langley', 'Coquitlam', 'Delta',
+      'Lethbridge', 'Red Deer', 'Medicine Hat', 'Fort McMurray',
+      'Grande Prairie', 'Lloydminster', 'Prince Albert', 'Moose Jaw',
+      'Brandon', 'Portage la Prairie'
+    ]
+    const serviceTypes = ['T1', 'T2', 'T3', 'T4', 'GST', 'HST', 'PST', 'Corporate', 'Trust', 'Partnership']
+    const complexities = ['Low', 'Medium', 'High', 'Very High']
+    const filingTypes = ['Electronic', 'Paper', 'Both']
+    const countries = ['Canada', 'Canada', 'Canada', 'Canada', 'Canada', 'Canada', 'Canada', 'Canada', 'USA', 'UK']
+    const entityTypes = ['Individual', 'Corporation', 'Trust', 'Partnership', 'Estate']
+    const milestones = ['Intake', 'In Progress', 'Manager Review', 'Partner Review', 'Filed', 'Complete', null, null]
+    const deliveryMethods = ['Electronic', 'Paper', 'Both', null]
+    const clientDeliveries = ['Email', 'Portal', 'Mail', null]
+    const firstNames = [
+      'James', 'Mary', 'Robert', 'Patricia', 'John', 'Jennifer', 'Michael', 'Linda',
+      'William', 'Barbara', 'David', 'Elizabeth', 'Richard', 'Susan', 'Joseph',
+      'Jessica', 'Thomas', 'Sarah', 'Charles', 'Karen', 'Christopher', 'Lisa',
+      'Daniel', 'Nancy', 'Matthew', 'Betty', 'Anthony', 'Margaret', 'Mark', 'Sandra',
+      'Donald', 'Ashley', 'Steven', 'Dorothy', 'Paul', 'Kimberly', 'Andrew', 'Emily',
+      'Kenneth', 'Donna', 'Joshua', 'Michelle', 'Kevin', 'Carol', 'Brian', 'Amanda',
+      'George', 'Melissa', 'Timothy', 'Deborah'
+    ]
+    const lastNames = [
+      'Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis',
+      'Rodriguez', 'Martinez', 'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson',
+      'Thomas', 'Taylor', 'Moore', 'Jackson', 'Martin', 'Lee', 'Perez', 'Thompson',
+      'White', 'Harris', 'Sanchez', 'Clark', 'Ramirez', 'Lewis', 'Robinson',
+      'Walker', 'Young', 'Allen', 'King', 'Wright', 'Scott', 'Torres', 'Nguyen',
+      'Hill', 'Flores', 'Green', 'Adams', 'Nelson', 'Baker', 'Hall', 'Rivera',
+      'Campbell', 'Mitchell', 'Carter', 'Roberts'
+    ]
+    const staffNames = [
+      'John Smith', 'Jane Doe', 'Robert Chen', 'Sarah Lee', 'Michael Brown',
+      'Emily Davis', 'David Wilson', 'Lisa Anderson', 'James Taylor', 'Amy Martin'
+    ]
+
+    // Seeded LCG RNG
+    let rng = 123456789
+    function rand(n) { rng = (rng * 1664525 + 1013904223) & 0x7fffffff; return rng % n }
+    function randBool(truePct) { return rand(100) < truePct }
+    function pick(arr) { return arr[rand(arr.length)] }
+    function maybeNull(val, nullPct = 30) { return rand(100) < nullPct ? null : val }
+
+    // Date helpers
+    function randomDate(start, end) {
+      const s = new Date(start).getTime(), e = new Date(end).getTime()
+      return new Date(s + rand(Math.floor((e - s) / 86400000)) * 86400000).toISOString().slice(0, 10)
+    }
+    function addDays(dateStr, days) {
+      if (!dateStr) return null
+      const d = new Date(dateStr); d.setDate(d.getDate() + days)
+      return d.toISOString().slice(0, 10)
+    }
+
+    const TARGET = 100000
+    const BATCH_SIZE = 250
+    let inserted = 0
+
+    while (inserted < TARGET) {
+      const batchRows = []
+      const batchSize = Math.min(BATCH_SIZE, TARGET - inserted)
+      for (let i = 0; i < batchSize; i++) {
+        const clientId = rand(200) + 1
+        const entityId = rand(1000) + 1
+        const taxYear = 2021 + rand(5)
+        const office = pick(offices)
+        const serviceType = pick(serviceTypes)
+        const statusId = rand(12) + 1
+        const complexity = pick(complexities)
+        const filingType = pick(filingTypes)
+        const country = pick(countries)
+        const entityType = pick(entityTypes)
+        const firstName = pick(firstNames)
+        const lastName = pick(lastNames)
+        const clientName = `Client Corp ${clientId}`
+        const dueDate = randomDate('2023-01-01', '2026-12-31')
+        const milestoneStartDate = maybeNull(addDays(dueDate, -rand(60) - 1))
+        const deliveryDate = maybeNull(addDays(dueDate, rand(30)))
+        const taxYearEnd = `${taxYear}-12-31`
+        const sanActivationDate = maybeNull(randomDate('2022-01-01', '2024-12-31'))
+        const sanExpiryDate = sanActivationDate ? addDays(sanActivationDate, 365) : null
+        const createdDatetime = randomDate('2022-01-01', '2024-12-31') + 'T00:00:00Z'
+        const updatedDatetime = addDays(createdDatetime.slice(0, 10), rand(180)) + 'T00:00:00Z'
+        const p1 = pick(staffNames), p2 = pick(staffNames)
+        const partnerNames = maybeNull(`${p1}, ${p2}`)
+        const preparerNames = maybeNull(pick(staffNames))
+        const reviewerNames = maybeNull(`${pick(staffNames)}`)
+        const hl = maybeNull(`["${pick(staffNames).replace(' ', '.').toLowerCase()}@firm.com"]`, 60)
+        const efilers = maybeNull(`["${pick(staffNames).replace(' ', '.').toLowerCase()}@firm.com"]`, 60)
+        const engagementName = `${clientName} ${serviceType} ${taxYear}`
+
+        batchRows.push([
+          engagementName, clientId, entityId, taxYear, serviceType, statusId,
+          dueDate, maybeNull(deliveryDate), taxYearEnd, complexity,
+          rand(50) + 1, rand(50) + 1,
+          createdDatetime, updatedDatetime,
+          randBool(90), // is_active
+          maybeNull(`ENG-${clientId}-${entityId}-${taxYear}`), // ibs_engagement_code
+          maybeNull(`CW_${clientId}_${entityId}.ac`), // caseware_filename
+          (1 + rand(199) + rand(100) * 0.01).toFixed(2), // estimated_hours
+          maybeNull(`TP_${clientId}_${entityId}.tax`), // taxprep_filename
+          maybeNull(`SAN-${rand(99999).toString().padStart(5, '0')}`), // san
+          maybeNull(sanActivationDate), // san_activation_date
+          maybeNull(sanExpiryDate), // san_expiry_date
+          maybeNull(pick(clientDeliveries)), // client_delivery
+          maybeNull(addDays(dueDate, 90)), // letter_expiry_date
+          randBool(5), // restrict_access
+          randBool(40), // is_automatically_send_questionnaire
+          randBool(30), // is_high_level_reviewer_required
+          randBool(80), // is_activated
+          office,
+          randBool(20), // send_to_crc
+          maybeNull(randBool(20) ? addDays(dueDate, -5) : null, 70), // crc_duedate
+          randBool(60), // is_office_of_partner
+          maybeNull(`//dms/client/${clientId}/${entityId}`), // dms_py_site_location
+          firstName, lastName, clientName,
+          maybeNull(`https://ifirm.ca/client/${clientId}`), // ifirm_url
+          `C${clientId.toString().padStart(5, '0')}`, // client_code
+          maybeNull(pick(['Standard', 'Rush', 'Extended', null]), 20), // tax_return_processing
+          randBool(70), // allow_client_service_assessment
+          randBool(85), // is_deliverable
+          filingType, maybeNull(firstName), country,
+          maybeNull(`Tax return for ${taxYear} ${serviceType}`), // description
+          entityType,
+          randBool(10), // is_extension
+          maybeNull(pick(milestones)), // client_milestone
+          maybeNull(pick(milestones)), // internal_milestone
+          randBool(50), // is_retention_policy
+          maybeNull(addDays(dueDate, rand(30))), // milestone_completed_date
+          milestoneStartDate,
+          randBool(5), // engagement_hold
+          randBool(5), // is_amended
+          randBool(10), // is_exception_approved
+          randBool(8), // is_form_missing
+          efilers,
+          hl, // hl_reviewers
+          maybeNull(`["user${rand(50)}@firm.com"]`, 60), // company_users
+          maybeNull(`["${pick(staffNames).replace(' ', '.').toLowerCase()}@firm.com"]`, 60), // partners
+          maybeNull(`["${pick(staffNames).replace(' ', '.').toLowerCase()}@firm.com"]`, 60), // preparers
+          maybeNull(`["${pick(staffNames).replace(' ', '.').toLowerCase()}@firm.com"]`, 60), // processors
+          maybeNull(`["${pick(staffNames).replace(' ', '.').toLowerCase()}@firm.com"]`, 60), // reviewers
+          maybeNull(`["service_team_${rand(10)}"]`, 60), // service_teams
+          maybeNull(pick(deliveryMethods)), // govt_delivery_method
+          maybeNull(rand(100) < 20 ? rand(inserted + 1) + 1 : null, 0), // parent_engagement_id
+          partnerNames,
+          preparerNames,
+          maybeNull(pick(staffNames)), // processor_names
+          reviewerNames,
+          maybeNull(pick(staffNames)), // company_user_names
+          maybeNull(pick(staffNames)), // hl_reviewer_names
+          maybeNull(`${pick(firstNames).toLowerCase()}.${pick(lastNames).toLowerCase()}@firm.com`), // efiler_names
+          randBool(60), // has_ifirm_url
+          maybeNull(rand(100) < 3 ? 'Efile transmission failed' : null, 0), // efile_auto_failed_reason
+          maybeNull(pick(['Accepted', 'Rejected', 'Pending', 'Not Filed', null])), // engagement_government_delivery_status
+          randBool(70), // print_auto_success
+          randBool(65), // send_to_client_auto_success
+          null, // contact_guid_id (UUID - leave null for simplicity)
+          randBool(2), // is_deceased
+          randBool(15), // is_farmer
+          randBool(10), // is_head_of_household
+          randBool(5), // is_paper_doc
+          maybeNull(randBool(10) ? addDays(dueDate, 60) : null, 0), // extension_duedate
+          randBool(80), // is_eng_name_same_as_entity_name
+          maybeNull(`${firstName} ${lastName} ${entityType}`), // legal_entity_name
+          randBool(40), // is_milestone_email_notification_sent
+          randBool(30), // is_roll_forwarded
+          null, // san_updated_datetime
+          randBool(20), // is_gen_ai_enabled
+          randBool(10), // is_lgd
+          randBool(8), // is_lgd_linked
+          randBool(5), // is_lgd_frontload
+          randBool(3), // is_incognito
+          randBool(5), // is_deliverable_na
+          maybeNull(rand(100) < 50 ? rand(500) + 1 : null, 0), // slip_volume
+          randBool(20), // is_prep_automated
+          maybeNull(randBool(60) ? true : false, 20), // consent_7216
+          maybeNull(`${rand(899999999) + 100000000}`), // sin_itn
+          maybeNull(`${rand(899999999) + 100000000}`), // ssn_itin
+          randBool(15), // is_automation_intake
+          maybeNull(partnerNames), // lead_partners
+          randBool(5), // is_in_rollforward_queue
+          randBool(3), // is_bulk_milestone_moving
+          maybeNull(`BN${rand(899999999) + 100000000}`), // business_number
+          randBool(40) // has_tax_dashboard
+        ])
+      }
+
+      // Build parameterized INSERT for this batch
+      const cols = [
+        'engagement_name', 'client_id', 'entity_id', 'tax_year', 'service_type', 'status_id',
+        'due_date', 'delivery_date', 'tax_year_end', 'complexity', 'created_by', 'updated_by',
+        'created_datetime', 'updated_datetime', 'is_active', 'ibs_engagement_code',
+        'caseware_filename', 'estimated_hours', 'taxprep_filename', 'san',
+        'san_activation_date', 'san_expiry_date', 'client_delivery', 'letter_expiry_date',
+        'restrict_access', 'is_automatically_send_questionnaire', 'is_high_level_reviewer_required',
+        'is_activated', 'office', 'send_to_crc', 'crc_duedate', 'is_office_of_partner',
+        'dms_py_site_location', 'first_name', 'last_name', 'client_name', 'ifirm_url',
+        'client_code', 'tax_return_processing', 'allow_client_service_assessment', 'is_deliverable',
+        'filing_type', 'preferred_name', 'country', 'description', 'entity_type', 'is_extension',
+        'client_milestone', 'internal_milestone', 'is_retention_policy', 'milestone_completed_date',
+        'milestone_start_date', 'engagement_hold', 'is_amended', 'is_exception_approved',
+        'is_form_missing', 'efilers', 'hl_reviewers', 'company_users', 'partners', 'preparers',
+        'processors', 'reviewers', 'service_teams', 'govt_delivery_method', 'parent_engagement_id',
+        'partner_names', 'preparer_names', 'processor_names', 'reviewer_names',
+        'company_user_names', 'hl_reviewer_names', 'efiler_names', 'has_ifirm_url',
+        'efile_auto_failed_reason', 'engagement_government_delivery_status',
+        'print_auto_success', 'send_to_client_auto_success', 'contact_guid_id',
+        'is_deceased', 'is_farmer', 'is_head_of_household', 'is_paper_doc', 'extension_duedate',
+        'is_eng_name_same_as_entity_name', 'legal_entity_name',
+        'is_milestone_email_notification_sent', 'is_roll_forwarded', 'san_updated_datetime',
+        'is_gen_ai_enabled', 'is_lgd', 'is_lgd_linked', 'is_lgd_frontload', 'is_incognito',
+        'is_deliverable_na', 'slip_volume', 'is_prep_automated', 'consent_7216',
+        'sin_itn', 'ssn_itin', 'is_automation_intake', 'lead_partners',
+        'is_in_rollforward_queue', 'is_bulk_milestone_moving', 'business_number', 'has_tax_dashboard'
+      ]
+      const numCols = cols.length
+      const valuePlaceholders = batchRows.map((_, ri) =>
+        '(' + Array.from({ length: numCols }, (_, ci) => `$${ri * numCols + ci + 1}`).join(', ') + ')'
+      ).join(', ')
+      const flatValues = batchRows.flat()
+      const sql = `INSERT INTO engagement (${cols.join(', ')}) VALUES ${valuePlaceholders}`
+      await client.query(sql, flatValues)
+
+      inserted += batchRows.length
+      if (inserted % 10000 === 0 || inserted === TARGET) {
+        console.log(`PG seed progress: ${inserted.toLocaleString()} / ${TARGET.toLocaleString()} rows`)
+      }
+    }
+
+    await client.query("INSERT INTO meta (key, value) VALUES ('seed_version', 'v2') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value")
+    console.log(`PG seed complete — ${TARGET.toLocaleString()} engagement rows inserted`)
+  } finally {
+    client.release()
+  }
+}
+
+// Run PG seed with retry — waits for DB to finish recovering before seeding
+async function pgSeedWithRetry(attemptsLeft = 30, delayMs = 5000) {
+  try {
+    await pgSeedIfNeeded()
+  } catch (err) {
+    if (attemptsLeft > 0) {
+      console.log(`PG not ready (${err.message?.slice(0, 80) ?? err}) — retrying in ${delayMs / 1000}s… (${attemptsLeft} left)`)
+      setTimeout(() => pgSeedWithRetry(attemptsLeft - 1, delayMs), delayMs)
+    } else {
+      console.error('PG seed failed after all retries:', err.message)
+    }
+  }
+}
+pgSeedWithRetry()
+
+
+// ── PG API: valid columns whitelist ──────────────────────────────
+const VALID_COLUMNS = new Set([
+  'id', 'engagement_name', 'client_id', 'entity_id', 'tax_year', 'service_type', 'status_id',
+  'due_date', 'delivery_date', 'tax_year_end', 'complexity', 'created_by', 'updated_by',
+  'created_datetime', 'updated_datetime', 'is_active', 'ibs_engagement_code',
+  'caseware_filename', 'estimated_hours', 'taxprep_filename', 'san',
+  'san_activation_date', 'san_expiry_date', 'client_delivery', 'letter_expiry_date',
+  'restrict_access', 'is_automatically_send_questionnaire', 'is_high_level_reviewer_required',
+  'is_activated', 'office', 'send_to_crc', 'crc_duedate', 'is_office_of_partner',
+  'dms_py_site_location', 'first_name', 'last_name', 'client_name', 'ifirm_url',
+  'client_code', 'tax_return_processing', 'allow_client_service_assessment', 'is_deliverable',
+  'filing_type', 'preferred_name', 'country', 'description', 'entity_type', 'is_extension',
+  'client_milestone', 'internal_milestone', 'is_retention_policy', 'milestone_completed_date',
+  'milestone_start_date', 'engagement_hold', 'is_amended', 'is_exception_approved',
+  'is_form_missing', 'efilers', 'hl_reviewers', 'company_users', 'partners', 'preparers',
+  'processors', 'reviewers', 'service_teams', 'govt_delivery_method', 'parent_engagement_id',
+  'partner_names', 'preparer_names', 'processor_names', 'reviewer_names',
+  'company_user_names', 'hl_reviewer_names', 'efiler_names', 'has_ifirm_url',
+  'efile_auto_failed_reason', 'engagement_government_delivery_status',
+  'print_auto_success', 'send_to_client_auto_success', 'contact_guid_id',
+  'is_deceased', 'is_farmer', 'is_head_of_household', 'is_paper_doc', 'extension_duedate',
+  'is_eng_name_same_as_entity_name', 'legal_entity_name',
+  'is_milestone_email_notification_sent', 'is_roll_forwarded', 'san_updated_datetime',
+  'is_gen_ai_enabled', 'is_lgd', 'is_lgd_linked', 'is_lgd_frontload', 'is_incognito',
+  'is_deliverable_na', 'slip_volume', 'is_prep_automated', 'consent_7216',
+  'sin_itn', 'ssn_itin', 'is_automation_intake', 'lead_partners',
+  'is_in_rollforward_queue', 'is_bulk_milestone_moving', 'business_number', 'has_tax_dashboard'
+])
+
+const PG_SORT_COLS = {
+  due_date: 'due_date',
+  milestone_start_date: 'milestone_start_date',
+  engagement_name: 'engagement_name',
+  client_name: 'client_name',
+  office: 'office',
+  tax_year: 'tax_year',
+  service_type: 'service_type',
+  status_id: 'status_id',
+  complexity: 'complexity',
+  estimated_hours: 'estimated_hours',
+}
+
+// ── PG API: count ─────────────────────────────────────────────────
+app.get('/api/pg/engagements/count', async (req, res) => {
+  try {
+    const result = await pgPool.query('SELECT COUNT(*) AS count FROM engagement')
+    res.json({ count: parseInt(result.rows[0].count) })
+  } catch (err) {
+    console.error('PG count error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── PG API: stream (SSE, cursor-based pagination) ─────────────────
+app.get('/api/pg/engagements/stream', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders()
+
+  const send = data => res.write(`data: ${JSON.stringify(data)}\n\n`)
+
+  // Parse and validate columns
+  const rawCols = req.query.columns ? req.query.columns.split(',').map(c => c.trim()).filter(Boolean) : []
+  const selectedCols = rawCols.filter(c => VALID_COLUMNS.has(c))
+  // Always include id
+  const colSet = new Set(['id', ...selectedCols])
+  const colList = [...colSet].join(', ')
+
+  // Sort
+  const sortKey = req.query.sort && PG_SORT_COLS[req.query.sort] ? req.query.sort : null
+  const sortCol = sortKey ? PG_SORT_COLS[sortKey] : null
+  const dir = req.query.dir === 'desc' ? 'desc' : 'asc'
+  const dirOp = dir === 'asc' ? '>' : '<'
+  const dirSql = dir === 'asc' ? 'ASC' : 'DESC'
+
+  // Limit
+  const limit = Math.min(parseInt(req.query.limit) || 1000, 2000)
+
+  // Parse cursor
+  let afterId = 0
+  let afterVal = null
+  if (req.query.after) {
+    try {
+      const decoded = JSON.parse(Buffer.from(req.query.after, 'base64').toString('utf8'))
+      afterId = decoded.id || 0
+      afterVal = decoded.val !== undefined ? decoded.val : null
+    } catch (_) {
+      // ignore bad cursor
+    }
+  }
+
+  const pgClient = await pgPool.connect()
+  try {
+    let sql, params
+    if (!sortCol) {
+      // Default: sort by id
+      sql = `SELECT ${colList} FROM engagement WHERE id > $1 ORDER BY id ASC LIMIT $2`
+      params = [afterId, limit + 1]
+    } else {
+      if (afterVal === null && afterId === 0) {
+        // First page
+        sql = `SELECT ${colList} FROM engagement ORDER BY ${sortCol} ${dirSql}, id ${dirSql} LIMIT $1`
+        params = [limit + 1]
+      } else {
+        // Cursor continuation using row value comparison
+        sql = `SELECT ${colList} FROM engagement WHERE (${sortCol}, id) ${dirOp} ($1, $2) ORDER BY ${sortCol} ${dirSql}, id ${dirSql} LIMIT $3`
+        params = [afterVal, afterId, limit + 1]
+      }
+    }
+
+    const cursor = pgClient.query(new Cursor(sql, params))
+    const rows = await new Promise((resolve, reject) => {
+      cursor.read(limit + 1, (err, rows) => {
+        if (err) reject(err); else resolve(rows)
+      })
+    })
+    cursor.close(() => {})
+
+    const hasMore = rows.length > limit
+    const pageRows = hasMore ? rows.slice(0, limit) : rows
+
+    let nextCursor = null
+    if (hasMore && pageRows.length > 0) {
+      const last = pageRows[pageRows.length - 1]
+      const cursorObj = { id: last.id, val: sortCol ? last[sortCol] : last.id }
+      nextCursor = Buffer.from(JSON.stringify(cursorObj)).toString('base64')
+    }
+
+    send({ rows: pageRows, hasMore, cursor: nextCursor, total: null })
+    if (!hasMore) {
+      send({ rows: [], hasMore: false, cursor: null })
+    }
+  } catch (err) {
+    console.error('PG stream error:', err)
+    send({ error: err.message })
+  } finally {
+    pgClient.release()
+    res.end()
+  }
+})
 
 // ── Start ─────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001

@@ -19,6 +19,15 @@
     .header h1 { font-size: 17px; font-weight: 700; }
     .header p  { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
+    /* Topbar */
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; gap: 16px; }
+    .topbar-title { font-size: 14px; font-weight: 600; color: var(--muted); text-decoration: none; }
+    .topbar-title:hover { color: var(--text); }
+    .topbar-nav { display: flex; gap: 8px; align-items: center; }
+    .topbar-nav a { font-size: 12px; color: var(--muted); text-decoration: none; padding: 5px 10px; border-radius: 6px; border: 1px solid transparent; transition: all 0.15s; white-space: nowrap; }
+    .topbar-nav a:hover { color: var(--text); border-color: var(--border); }
+    .topbar-nav a.active { color: var(--text); background: var(--surface2); border-color: var(--border); font-weight: 600; }
+
     /* Demo cards */
     .demo-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px 24px; flex-shrink: 0; }
     .demo-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
@@ -150,12 +159,14 @@
 </head>
 <body>
 
-<div class="header" style="display:flex;align-items:center;justify-content:space-between">
-  <div>
-    <h1>Engagement Data — Architecture POC</h1>
-    <p>N+1 waterfall vs flat query · virtual rendering · live WebSocket updates</p>
-  </div>
-  <a href="architecture.html" style="font-size:12px;color:var(--blue);text-decoration:none;white-space:nowrap;padding:6px 12px;border:1px solid var(--blue)44;border-radius:7px;background:var(--blue)11">Architecture →</a>
+<div class="topbar">
+  <a href="index.html" class="topbar-title">Engagement Data POC</a>
+  <nav class="topbar-nav">
+    <span style="font-size:11px;color:var(--red);font-weight:700;border:1px solid var(--red)44;border-radius:4px;padding:2px 8px">V1 Legacy</span>
+    <a href="engagement.html" class="active">Demo</a>
+    <a href="architecture.html">Docs</a>
+    <a href="engagements.html">V2 Demo →</a>
+  </nav>
 </div>
 
 <div class="demo-row">

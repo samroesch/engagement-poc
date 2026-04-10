@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PG Engagements — Architecture POC</title>
+  <style>
+    :root {
+      --bg: #0e0e11; --surface: #1a1a1f; --surface2: #222228; --border: #2e2e36;
+      --text: #e8e8ed; --muted: #6e6e7a;
+      --green: #32d74b; --amber: #ffd60a; --red: #ff453a; --blue: #4a9eff; --purple: #bf5af2;
+      --row-h: 40px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--text);
+      height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* Topbar */
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+      gap: 16px;
+    }
+    .topbar-title { font-size: 15px; font-weight: 700; white-space: nowrap; color: var(--muted); text-decoration: none; }
+    .topbar-title:hover { color: var(--text); }
+    .topbar-nav { display: flex; gap: 8px; align-items: center; }
+    .topbar-nav a {
+      font-size: 12px; color: var(--muted); text-decoration: none;
+      padding: 5px 10px; border-radius: 6px; border: 1px solid transparent;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .topbar-nav a:hover { color: var(--text); border-color: var(--border); }
+    .topbar-nav a.active { color: var(--text); background: var(--surface2); border-color: var(--border); font-weight: 600; }
+
+    /* Main layout: sidebar + main */
+    .layout { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+
+    /* Column picker sidebar */
+    .col-picker {
+      width: 220px; flex-shrink: 0; border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .col-picker-header {
+      padding: 10px 12px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .col-picker-header h3 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); margin-bottom: 6px; }
+    .col-picker-actions { display: flex; gap: 6px; }
+    .col-picker-scroll { flex: 1; overflow-y: auto; padding: 6px 0; }
+    .col-picker-scroll::-webkit-scrollbar { width: 4px; }
+    .col-picker-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .col-item {
+      display: flex; align-items: center; gap: 7px;
+      padding: 4px 12px; cursor: pointer; transition: background 0.08s;
+      font-size: 12px; color: var(--muted); user-select: none;
+    }
+    .col-item:hover { background: var(--surface2); color: var(--text); }
+    .col-item input[type=checkbox] { accent-color: var(--green); cursor: pointer; flex-shrink: 0; }
+    .col-item.checked { color: var(--text); }
+
+    /* Main content */
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+
+    /* Filter bar */
+    .filter-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap;
+    }
+    .filter-label { font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+    .filter-select {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 12px;
+      font-family: inherit; padding: 4px 8px; outline: none; cursor: pointer;
+    }
+    .filter-divider { width: 1px; height: 18px; background: var(--border); margin: 0 2px; flex-shrink: 0; }
+    .group-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .group-btn { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: 12px; font-family: inherit; padding: 4px 12px; cursor: pointer; }
+    .group-btn:hover { color: var(--text); border-color: var(--text)44; }
+    .group-btn.active { background: var(--blue)22; border-color: var(--blue)66; color: var(--blue); font-weight: 600; }
+
+    /* Status bar */
+    .status-bar {
+      display: flex; align-items: center; gap: 14px;
+      padding: 6px 16px; border-bottom: 1px solid var(--border);
+      flex-shrink: 0; flex-wrap: wrap;
+    }
+    .status-stat { font-size: 12px; color: var(--muted); }
+    .status-stat span { color: var(--text); font-weight: 600; }
+    .status-stat.loading span { color: var(--amber); }
+    .load-more-btn {
+      margin-left: auto; padding: 5px 12px; border-radius: 6px;
+      font-size: 12px; font-weight: 600; border: 1px solid var(--green)44;
+      background: var(--green)11; color: var(--green); cursor: pointer;
+      transition: opacity 0.15s; white-space: nowrap;
+    }
+    .load-more-btn:hover { opacity: 0.8; }
+    .load-more-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Buttons */
+    .btn-tiny {
+      padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: 600;
+      border: 1px solid var(--border); background: var(--surface2); color: var(--muted);
+      cursor: pointer; transition: all 0.15s;
+    }
+    .btn-tiny:hover { color: var(--text); border-color: var(--text)44; }
+
+    /* Table area */
+    .table-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+    .table-outer {
+      flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0;
+    }
+    .table-head-wrap { overflow: hidden; flex-shrink: 0; }
+    .table-head {
+      display: grid; background: var(--surface2); border-bottom: 1px solid var(--border);
+      overflow-y: scroll; scrollbar-gutter: stable;
+    }
+    .table-head::-webkit-scrollbar { width: 6px; }
+    .table-head::-webkit-scrollbar-thumb { background: transparent; }
+    .th {
+      padding: 0 10px; height: 32px; display: flex; align-items: center;
+      font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+      color: var(--muted); border-right: 1px solid var(--border);
+      cursor: pointer; user-select: none; white-space: nowrap; overflow: hidden;
+      transition: color 0.12s;
+    }
+    .th:last-child { border-right: none; }
+    .th:hover { color: var(--text); }
+    .th.sorted { color: var(--blue); }
+    .sort-arrow { margin-left: 4px; font-size: 9px; }
+
+    .table-viewport {
+      flex: 1; overflow-y: auto; scrollbar-gutter: stable; position: relative; min-height: 0;
+    }
+    .table-viewport::-webkit-scrollbar { width: 6px; }
+    .table-viewport::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .row-spacer { width: 100%; pointer-events: none; }
+    .row-container { position: absolute; top: 0; left: 0; right: 0; }
+
+    .row {
+      display: grid; height: var(--row-h); border-bottom: 1px solid var(--border);
+      cursor: pointer; transition: background 0.08s;
+    }
+    .row:hover { background: var(--surface2); }
+    .cell {
+      padding: 0 10px; display: flex; align-items: center; font-size: 12px;
+      overflow: hidden; border-right: 1px solid var(--border); white-space: nowrap;
+      color: var(--text);
+    }
+    .cell:last-child { border-right: none; }
+    .cell-inner { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .badge {
+      display: inline-flex; align-items: center; padding: 2px 6px;
+      border-radius: 4px; font-size: 10px; font-weight: 700; white-space: nowrap;
+    }
+    .cx-Low      { background: var(--green)1a; color: var(--green); }
+    .cx-Medium   { background: var(--amber)1a; color: var(--amber); }
+    .cx-High     { background: var(--red)1a;   color: var(--red); }
+    .cx-Very-High { background: var(--red)33;  color: var(--red); font-weight: 800; }
+    .bool-true  { color: var(--green); font-size: 11px; }
+    .bool-false { color: var(--muted); font-size: 11px; }
+
+    .empty {
+      display: flex; align-items: center; justify-content: center;
+      height: 200px; color: var(--muted); font-size: 13px;
+      flex-direction: column; gap: 6px;
+    }
+
+    /* Tree row styles */
+    .row-client { background: var(--surface2); cursor: pointer; font-weight: 700; }
+    .row-client:hover { background: var(--surface); }
+    .row-entity { background: var(--surface); cursor: pointer; font-weight: 600; }
+    .row-entity:hover { filter: brightness(1.1); }
+    .cell-chevron { width: 28px; flex-shrink: 0; color: var(--muted); }
+    .cell-count { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="index.html" class="topbar-title">Engagement Data POC</a>
+  <nav class="topbar-nav">
+    <span style="font-size:11px;color:var(--green);font-weight:700;border:1px solid var(--green)44;border-radius:4px;padding:2px 8px">V2</span>
+    <a href="engagements.html" class="active">Demo</a>
+    <a href="architecture-v2.html">Docs</a>
+    <a href="engagement.html">V1 Legacy</a>
+  </nav>
+</div>
+
+<div class="layout">
+
+  <!-- Column picker sidebar -->
+  <div class="col-picker">
+    <div class="col-picker-header">
+      <h3>Columns</h3>
+      <div class="col-picker-actions">
+        <button class="btn-tiny" onclick="selectAllCols()">All</button>
+        <button class="btn-tiny" onclick="clearAllCols()">Clear</button>
+        <button class="btn-tiny" onclick="resetCols()">Reset</button>
+      </div>
+    </div>
+    <div class="col-picker-scroll" id="colPickerList"></div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Group mode toolbar -->
+    <div class="group-toolbar">
+      <span class="filter-label">View</span>
+      <button class="group-btn active" id="gbtn-flat"   onclick="setGroupMode('flat')">Flat</button>
+      <button class="group-btn"        id="gbtn-client" onclick="setGroupMode('client')">Client</button>
+      <button class="group-btn"        id="gbtn-entity" onclick="setGroupMode('entity')">Entity</button>
+      <button class="group-btn"        id="gbtn-both"   onclick="setGroupMode('both')">Client + Entity</button>
+      <div style="width:1px;height:18px;background:var(--border);margin:0 4px"></div>
+      <button class="group-btn" onclick="expandAll()">Expand All</button>
+      <button class="group-btn" onclick="collapseAll()">Collapse All</button>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="filter-bar">
+      <span class="filter-label">Office</span>
+      <select class="filter-select" id="fOffice" onchange="applyFilters(true)">
+        <option value="">All</option>
+      </select>
+      <div class="filter-divider"></div>
+      <span class="filter-label">Tax Year</span>
+      <select class="filter-select" id="fTaxYear" onchange="applyFilters(true)">
+        <option value="">All</option>
+        <option>2021</option><option>2022</option><option>2023</option>
+        <option>2024</option><option>2025</option>
+      </select>
+      <div class="filter-divider"></div>
+      <span class="filter-label">Service Type</span>
+      <select class="filter-select" id="fServiceType" onchange="applyFilters(true)">
+        <option value="">All</option>
+        <option>T1</option><option>T2</option><option>T3</option><option>T4</option>
+        <option>GST</option><option>HST</option><option>PST</option>
+        <option>Corporate</option><option>Trust</option><option>Partnership</option>
+      </select>
+      <div class="filter-divider"></div>
+      <span class="filter-label">Status</span>
+      <select class="filter-select" id="fStatus" onchange="applyFilters(true)">
+        <option value="">All</option>
+        <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+        <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+        <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+        <option value="10">10</option><option value="11">11</option><option value="12">12</option>
+      </select>
+      <div class="filter-divider"></div>
+      <span class="filter-label">Complexity</span>
+      <select class="filter-select" id="fComplexity" onchange="applyFilters(true)">
+        <option value="">All</option>
+        <option>Low</option><option>Medium</option><option>High</option><option>Very High</option>
+      </select>
+      <div class="filter-divider"></div>
+      <span class="filter-label">Filing Type</span>
+      <select class="filter-select" id="fFilingType" onchange="applyFilters(true)">
+        <option value="">All</option>
+        <option>Electronic</option><option>Paper</option><option>Both</option>
+      </select>
+    </div>
+
+    <!-- Status bar -->
+    <div class="status-bar">
+      <div class="status-stat" id="statFiltered"><span id="filteredCount">—</span> shown</div>
+      <div class="status-stat" id="statLoaded"><span id="loadedCount">—</span> loaded</div>
+      <div class="status-stat" id="statTotal"><span id="totalCount">—</span> total in DB</div>
+      <div class="status-stat" id="statFetching" style="display:none"><span>Fetching…</span></div>
+      <button class="load-more-btn" id="loadMoreBtn" onclick="loadMore()" disabled>Load more</button>
+    </div>
+
+    <!-- Table -->
+    <div class="table-wrap">
+      <div class="table-outer">
+        <div class="table-head-wrap">
+          <div class="table-head" id="tableHead"></div>
+        </div>
+        <div class="table-viewport" id="viewport" onscroll="renderRows()">
+          <div class="empty" id="emptyMsg">
+            <div>Loading data…</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">Connecting to PostgreSQL</div>
+          </div>
+          <div class="row-spacer" id="spacer"></div>
+          <div class="row-container" id="rowContainer"></div>
+        </div>
+      </div>
+    </div>
+  </div><!-- .main -->
+</div><!-- .layout -->
+
+<script>
+// ── Constants ─────────────────────────────────────────────────────
+const ROW_H = 40
+const OVERSCAN = 8
+const LOAD_SIZE = 1000
+const VISIBLE_TARGET = 1000
+
+// All columns in schema order
+const ALL_COLUMNS = [
+  'id','engagement_name','client_id','entity_id','entity_name','tax_year','service_type','status_id',
+  'due_date','delivery_date','tax_year_end','complexity','created_by','updated_by',
+  'created_datetime','updated_datetime','is_active','ibs_engagement_code',
+  'caseware_filename','estimated_hours','taxprep_filename','san',
+  'san_activation_date','san_expiry_date','client_delivery','letter_expiry_date',
+  'restrict_access','is_automatically_send_questionnaire','is_high_level_reviewer_required',
+  'is_activated','office','send_to_crc','crc_duedate','is_office_of_partner',
+  'dms_py_site_location','first_name','last_name','client_name','ifirm_url',
+  'client_code','tax_return_processing','allow_client_service_assessment','is_deliverable',
+  'filing_type','preferred_name','country','description','entity_type','is_extension',
+  'client_milestone','internal_milestone','is_retention_policy','milestone_completed_date',
+  'milestone_start_date','engagement_hold','is_amended','is_exception_approved',
+  'is_form_missing','efilers','hl_reviewers','company_users','partners','preparers',
+  'processors','reviewers','service_teams','govt_delivery_method','parent_engagement_id',
+  'partner_names','preparer_names','processor_names','reviewer_names',
+  'company_user_names','hl_reviewer_names','efiler_names','has_ifirm_url',
+  'efile_auto_failed_reason','engagement_government_delivery_status',
+  'print_auto_success','send_to_client_auto_success','contact_guid_id',
+  'is_deceased','is_farmer','is_head_of_household','is_paper_doc','extension_duedate',
+  'is_eng_name_same_as_entity_name','legal_entity_name',
+  'is_milestone_email_notification_sent','is_roll_forwarded','san_updated_datetime',
+  'is_gen_ai_enabled','is_lgd','is_lgd_linked','is_lgd_frontload','is_incognito',
+  'is_deliverable_na','slip_volume','is_prep_automated','consent_7216',
+  'sin_itn','ssn_itin','is_automation_intake','lead_partners',
+  'is_in_rollforward_queue','is_bulk_milestone_moving','business_number','has_tax_dashboard'
+]
+
+const SORT_COLS = new Set([
+  'due_date','milestone_start_date','engagement_name','client_name','office',
+  'tax_year','service_type','status_id','complexity','estimated_hours'
+])
+
+const DEFAULT_COLS = new Set([
+  'engagement_name','client_name','entity_name','office','tax_year','service_type',
+  'status_id','due_date','complexity','filing_type','entity_type'
+])
+
+// Column width hints (px), default 120
+const COL_WIDTHS = {
+  id: 60, engagement_name: 220, client_name: 160, entity_name: 180, office: 120,
+  tax_year: 70, service_type: 90, status_id: 70, due_date: 100,
+  complexity: 90, filing_type: 90, entity_type: 110,
+  estimated_hours: 90, is_active: 70, first_name: 100, last_name: 100,
+  client_id: 70, entity_id: 70, description: 200,
+}
+function colWidth(c) { return COL_WIDTHS[c] || 120 }
+
+// ── State ──────────────────────────────────────────────────────────
+let selectedCols = new Set(DEFAULT_COLS)
+let allRows = []          // All loaded rows from server
+let filteredRows = []     // After client-side filters
+let visibleRows = []      // For virtual scroll (includes tree header rows)
+let cursor = null
+let hasMore = false
+let totalCount = null
+let isFetching = false
+let sortCol = null
+let sortDir = 'asc'
+
+// Tree state
+let groupMode = 'flat'
+let expandedClients = new Set()
+let expandedEntities = new Set()
+let treeClients = []      // [{id, name, entities: [{id, name, rows:[]}]}]
+
+// Filter state
+let fOffice = '', fTaxYear = '', fServiceType = '', fStatus = '', fComplexity = '', fFilingType = ''
+
+// ── Init ───────────────────────────────────────────────────────────
+buildColPicker()
+fetchTotal()
+fetchBatch()
+
+// Populate office dropdown (will fill after first batch)
+function populateOfficeDropdown() {
+  const offices = [...new Set(allRows.map(r => r.office).filter(Boolean))].sort()
+  const sel = document.getElementById('fOffice')
+  const cur = sel.value
+  sel.innerHTML = '<option value="">All</option>' + offices.map(o => `<option${o===cur?' selected':''}>${o}</option>`).join('')
+}
+
+// ── Column picker ──────────────────────────────────────────────────
+function buildColPicker() {
+  const list = document.getElementById('colPickerList')
+  list.innerHTML = ALL_COLUMNS.map(c => `
+    <label class="col-item${selectedCols.has(c) ? ' checked' : ''}" id="col-item-${c}">
+      <input type="checkbox" id="chk-${c}" ${selectedCols.has(c) ? 'checked' : ''}
+        onchange="toggleCol('${c}', this.checked)">
+      <span>${c}</span>
+    </label>
+  `).join('')
+}
+
+function toggleCol(col, checked) {
+  if (checked) selectedCols.add(col)
+  else selectedCols.delete(col)
+  document.getElementById(`col-item-${col}`).classList.toggle('checked', checked)
+  onColumnsChanged()
+}
+
+function selectAllCols() {
+  ALL_COLUMNS.forEach(c => {
+    selectedCols.add(c)
+    const chk = document.getElementById(`chk-${c}`)
+    if (chk) chk.checked = true
+    document.getElementById(`col-item-${c}`)?.classList.add('checked')
+  })
+  onColumnsChanged()
+}
+
+function clearAllCols() {
+  ALL_COLUMNS.forEach(c => {
+    if (c === 'id') return  // keep id
+    selectedCols.delete(c)
+    const chk = document.getElementById(`chk-${c}`)
+    if (chk) chk.checked = false
+    document.getElementById(`col-item-${c}`)?.classList.remove('checked')
+  })
+  onColumnsChanged()
+}
+
+function resetCols() {
+  ALL_COLUMNS.forEach(c => {
+    const want = DEFAULT_COLS.has(c)
+    if (want) selectedCols.add(c); else selectedCols.delete(c)
+    const chk = document.getElementById(`chk-${c}`)
+    if (chk) chk.checked = want
+    document.getElementById(`col-item-${c}`)?.classList.toggle('checked', want)
+  })
+  onColumnsChanged()
+}
+
+function onColumnsChanged() {
+  // Reset and refetch with server-side filters
+  allRows = []
+  filteredRows = []
+  visibleRows = []
+  cursor = null
+  hasMore = true
+  rebuildHeader()
+  renderRows()
+  fetchBatch()
+}
+
+// ── Total count ────────────────────────────────────────────────────
+async function fetchTotal() {
+  try {
+    const res = await fetch('/api/engagements/count')
+    const data = await res.json()
+    totalCount = data.count
+    document.getElementById('totalCount').textContent = totalCount.toLocaleString()
+  } catch (e) { console.error('Count error:', e) }
+}
+
+// ── Fetch batch ────────────────────────────────────────────────────
+async function fetchBatch() {
+  if (isFetching) return
+  isFetching = true
+  document.getElementById('statFetching').style.display = ''
+  document.getElementById('loadMoreBtn').disabled = true
+
+  const cols = ['id', ...selectedCols].filter((v, i, a) => a.indexOf(v) === i)
+  // Always include columns needed for tree building
+  if (!cols.includes('client_id')) cols.push('client_id')
+  if (!cols.includes('client_name')) cols.push('client_name')
+  if (!cols.includes('entity_id')) cols.push('entity_id')
+  if (!cols.includes('entity_name')) cols.push('entity_name')
+
+  const params = new URLSearchParams({ columns: cols.join(','), limit: LOAD_SIZE })
+  if (sortCol) { params.set('sort', sortCol); params.set('dir', sortDir) }
+  if (cursor) params.set('after', cursor)
+
+  // Pass active server-side filters
+  if (fOffice)      params.set('office', fOffice)
+  if (fTaxYear)     params.set('tax_year', fTaxYear)
+  if (fServiceType) params.set('service_type', fServiceType)
+  if (fStatus)      params.set('status_id', fStatus)
+  if (fComplexity)  params.set('complexity', fComplexity)
+  if (fFilingType)  params.set('filing_type', fFilingType)
+
+  try {
+    const res = await fetch(`/api/engagements/stream?${params}`)
+    const text = await res.text()
+    // SSE response: parse all data: lines
+    const events = text.split('\n').filter(l => l.startsWith('data: '))
+    for (const line of events) {
+      try {
+        const payload = JSON.parse(line.slice(6))
+        if (payload.error) { console.error('Stream error:', payload.error); continue }
+        if (payload.rows && payload.rows.length > 0) {
+          allRows = allRows.concat(payload.rows)
+        }
+        if (payload.hasMore !== undefined) hasMore = payload.hasMore
+        if (payload.cursor !== undefined) cursor = payload.cursor
+      } catch (_) {}
+    }
+    applyFilters(false)
+    if (allRows.length > 0) populateOfficeDropdown()
+  } catch (e) {
+    console.error('Fetch error:', e)
+  } finally {
+    isFetching = false
+    document.getElementById('statFetching').style.display = 'none'
+    document.getElementById('loadMoreBtn').disabled = !hasMore
+    updateStats()
+    checkThreshold()
+  }
+}
+
+function loadMore() {
+  if (!hasMore || isFetching) return
+  fetchBatch()
+}
+
+function checkThreshold() {
+  if (!hasMore || isFetching) return
+  if (filteredRows.length >= VISIBLE_TARGET) return
+  fetchBatch()   // always fetch more if under target and more available
+}
+
+// ── Filters ────────────────────────────────────────────────────────
+function applyFilters(fromUser = false) {
+  fOffice      = document.getElementById('fOffice').value
+  fTaxYear     = document.getElementById('fTaxYear').value
+  fServiceType = document.getElementById('fServiceType').value
+  fStatus      = document.getElementById('fStatus').value
+  fComplexity  = document.getElementById('fComplexity').value
+  fFilingType  = document.getElementById('fFilingType').value
+
+  if (fromUser) {
+    // User changed a filter — reset everything and refetch from server
+    allRows = []
+    filteredRows = []
+    visibleRows = []
+    cursor = null
+    hasMore = true
+    document.getElementById('viewport').scrollTop = 0
+    rebuildHeader()
+    renderRows()
+    fetchBatch()
+    return
+  }
+
+  // Called after batch load — filter in memory only
+  filteredRows = allRows.filter(r => {
+    if (fOffice      && r.office       !== fOffice)                   return false
+    if (fTaxYear     && String(r.tax_year) !== fTaxYear)              return false
+    if (fServiceType && r.service_type  !== fServiceType)             return false
+    if (fStatus      && String(r.status_id) !== fStatus)              return false
+    if (fComplexity  && r.complexity    !== fComplexity)              return false
+    if (fFilingType  && r.filing_type   !== fFilingType)              return false
+    return true
+  })
+
+  rebuildVisibleRows()
+  updateStats()
+  document.getElementById('viewport').scrollTop = 0
+  renderRows()
+  checkThreshold()
+}
+
+function updateStats() {
+  document.getElementById('filteredCount').textContent = filteredRows.length.toLocaleString()
+  document.getElementById('loadedCount').textContent   = allRows.length.toLocaleString()
+  if (totalCount !== null) {
+    document.getElementById('totalCount').textContent  = totalCount.toLocaleString()
+  }
+  document.getElementById('loadMoreBtn').disabled = !hasMore || isFetching
+}
+
+// ── Sorting ────────────────────────────────────────────────────────
+function setSort(col) {
+  if (!SORT_COLS.has(col)) return
+  if (sortCol === col) {
+    sortDir = sortDir === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortCol = col
+    sortDir = 'asc'
+  }
+  // Reset and refetch
+  allRows = []
+  filteredRows = []
+  visibleRows = []
+  cursor = null
+  hasMore = true
+  rebuildHeader()
+  renderRows()
+  fetchBatch()
+}
+
+// ── Tree building ──────────────────────────────────────────────────
+function buildTree(rows) {
+  const clientMap = new Map()
+
+  for (const r of rows) {
+    const cId   = r.client_id
+    const cName = r.client_name || `Client ${cId}`
+    const eId   = r.entity_id
+    const eName = r.entity_name || `Entity ${eId}`
+
+    if (!clientMap.has(cId)) {
+      clientMap.set(cId, { id: cId, name: cName, entityMap: new Map() })
+    }
+    const client = clientMap.get(cId)
+
+    if (!client.entityMap.has(eId)) {
+      client.entityMap.set(eId, { id: eId, name: eName, rows: [] })
+    }
+    client.entityMap.get(eId).rows.push(r)
+  }
+
+  treeClients = Array.from(clientMap.values())
+    .map(c => ({
+      id: c.id,
+      name: c.name,
+      entities: Array.from(c.entityMap.values())
+        .sort((a, b) => a.name.localeCompare(b.name))
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  // Auto-expand all on tree build
+  for (const c of treeClients) {
+    expandedClients.add(c.id)
+    for (const e of c.entities) expandedEntities.add(e.id)
+  }
+}
+
+function buildVisibleRows() {
+  if (groupMode === 'flat') {
+    return filteredRows.map(r => ({ kind: 'row', data: r }))
+  }
+
+  // Build a filtered rows set for quick lookup by entity/client
+  const filteredSet = new Set(filteredRows)
+
+  const result = []
+
+  if (groupMode === 'client') {
+    for (const client of treeClients) {
+      // Collect filtered rows for this client
+      const clientRows = filteredRows.filter(r => r.client_id === client.id)
+      if (clientRows.length === 0) continue
+      result.push({ kind: 'client', client, count: clientRows.length })
+      if (expandedClients.has(client.id)) {
+        for (const r of clientRows) {
+          result.push({ kind: 'row', data: r })
+        }
+      }
+    }
+  } else if (groupMode === 'entity') {
+    for (const client of treeClients) {
+      for (const entity of client.entities) {
+        const entityRows = entity.rows.filter(r => filteredSet.has(r))
+        if (entityRows.length === 0) continue
+        result.push({ kind: 'entity', entity, client, count: entityRows.length })
+        if (expandedEntities.has(entity.id)) {
+          for (const r of entityRows) {
+            result.push({ kind: 'row', data: r })
+          }
+        }
+      }
+    }
+  } else if (groupMode === 'both') {
+    for (const client of treeClients) {
+      const clientRows = filteredRows.filter(r => r.client_id === client.id)
+      if (clientRows.length === 0) continue
+      result.push({ kind: 'client', client, count: clientRows.length })
+      if (expandedClients.has(client.id)) {
+        for (const entity of client.entities) {
+          const entityRows = entity.rows.filter(r => filteredSet.has(r))
+          if (entityRows.length === 0) continue
+          result.push({ kind: 'entity', entity, client, count: entityRows.length })
+          if (expandedEntities.has(entity.id)) {
+            for (const r of entityRows) {
+              result.push({ kind: 'row', data: r })
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return result
+}
+
+function rebuildVisibleRows() {
+  buildTree(allRows)
+  visibleRows = buildVisibleRows()
+}
+
+// ── Tree toggle functions ──────────────────────────────────────────
+function toggleClient(id) {
+  if (expandedClients.has(id)) expandedClients.delete(id)
+  else expandedClients.add(id)
+  visibleRows = buildVisibleRows()
+  renderRows()
+}
+
+function toggleEntity(id) {
+  if (expandedEntities.has(id)) expandedEntities.delete(id)
+  else expandedEntities.add(id)
+  visibleRows = buildVisibleRows()
+  renderRows()
+}
+
+function expandAll() {
+  for (const c of treeClients) {
+    expandedClients.add(c.id)
+    for (const e of c.entities) expandedEntities.add(e.id)
+  }
+  visibleRows = buildVisibleRows()
+  renderRows()
+}
+
+function collapseAll() {
+  expandedClients.clear()
+  expandedEntities.clear()
+  visibleRows = buildVisibleRows()
+  renderRows()
+}
+
+function setGroupMode(mode) {
+  groupMode = mode
+  document.querySelectorAll('.group-btn').forEach(b => b.classList.remove('active'))
+  document.getElementById('gbtn-' + mode)?.classList.add('active')
+  visibleRows = buildVisibleRows()
+  renderRows()
+}
+
+// ── Header ─────────────────────────────────────────────────────────
+function getVisibleCols() {
+  // id always included but not necessarily shown (needed for cursor)
+  const vis = ALL_COLUMNS.filter(c => selectedCols.has(c))
+  if (!vis.includes('id')) vis.unshift('id')
+  return vis
+}
+
+function rebuildHeader() {
+  const visCols = getVisibleCols()
+  const gridCols = visCols.map(c => `${colWidth(c)}px`).join(' ')
+
+  const head = document.getElementById('tableHead')
+  head.style.gridTemplateColumns = gridCols
+  head.innerHTML = visCols.map(c => {
+    const isSorted = sortCol === c
+    const canSort = SORT_COLS.has(c)
+    const arrow = isSorted ? (sortDir === 'asc' ? ' ↑' : ' ↓') : (canSort ? ' ↕' : '')
+    return `<div class="th${isSorted ? ' sorted' : ''}" ${canSort ? `onclick="setSort('${c}')"` : ''}>${c.replace(/_/g,' ')}<span class="sort-arrow">${arrow}</span></div>`
+  }).join('')
+}
+
+// ── Virtual render ─────────────────────────────────────────────────
+let lastRenderKey = ''
+
+function renderRows() {
+  const visCols = getVisibleCols()
+  const gridCols = visCols.map(c => `${colWidth(c)}px`).join(' ')
+  const viewport  = document.getElementById('viewport')
+  const spacer    = document.getElementById('spacer')
+  const container = document.getElementById('rowContainer')
+  const emptyMsg  = document.getElementById('emptyMsg')
+
+  const totalH = visibleRows.length * ROW_H
+  spacer.style.height = totalH + 'px'
+
+  const viewH    = viewport.clientHeight
+  const scrollTop = viewport.scrollTop
+  const startIdx  = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN)
+  const endIdx    = Math.min(visibleRows.length, Math.ceil((scrollTop + viewH) / ROW_H) + OVERSCAN)
+
+  const renderKey = `${startIdx}-${endIdx}-${visCols.join(',')}-${visibleRows.length}-${groupMode}`
+  if (renderKey === lastRenderKey) return
+  lastRenderKey = renderKey
+
+  if (visibleRows.length === 0) {
+    container.innerHTML = ''
+    emptyMsg.style.display = 'flex'
+    emptyMsg.firstElementChild.textContent = allRows.length === 0
+      ? (isFetching ? 'Loading data…' : 'No data loaded')
+      : 'No rows match current filters'
+    rebuildHeader()
+    return
+  }
+  emptyMsg.style.display = 'none'
+
+  rebuildHeader()
+
+  const slice = visibleRows.slice(startIdx, endIdx)
+
+  const html = slice.map((vr, i) => {
+    const absIdx = startIdx + i
+    const translateY = absIdx * ROW_H
+
+    if (vr.kind === 'client') {
+      const expanded = expandedClients.has(vr.client.id)
+      return `<div class="row row-client" style="transform:translateY(${translateY}px);position:absolute;left:0;right:0;display:flex;" onclick="toggleClient(${vr.client.id})">
+        <div class="cell cell-chevron">${expanded ? '▾' : '▸'}</div>
+        <div class="cell cell-name" style="flex:1">${escHtml(vr.client.name)}</div>
+        <div class="cell cell-count">${vr.count} engagements</div>
+      </div>`
+    }
+
+    if (vr.kind === 'entity') {
+      const expanded = expandedEntities.has(vr.entity.id)
+      return `<div class="row row-entity" style="transform:translateY(${translateY}px);position:absolute;left:0;right:0;display:flex;" onclick="toggleEntity(${vr.entity.id})">
+        <div class="cell cell-chevron" style="padding-left:20px">${expanded ? '▾' : '▸'}</div>
+        <div class="cell cell-name" style="flex:1">${escHtml(vr.entity.name)}</div>
+        <div class="cell cell-count">${vr.count} engagements</div>
+      </div>`
+    }
+
+    // kind === 'row'
+    const row = vr.data
+    const inTreeMode = groupMode !== 'flat'
+    const cells = visCols.map(c => {
+      // In tree modes, indent data rows slightly and skip tree grouping columns to reduce redundancy
+      if (inTreeMode && (c === 'client_name' || c === 'entity_name')) {
+        return `<div class="cell" style="padding-left:${groupMode === 'both' ? '36' : '20'}px"><span class="cell-inner" style="color:var(--muted)">—</span></div>`
+      }
+      const val = row[c]
+      return `<div class="cell">${renderCell(c, val)}</div>`
+    }).join('')
+    return `<div class="row" style="grid-template-columns:${gridCols};transform:translateY(${translateY}px);position:absolute;left:0;right:0">${cells}</div>`
+  }).join('')
+
+  container.innerHTML = html
+}
+
+function escHtml(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+}
+
+function renderCell(col, val) {
+  if (val === null || val === undefined) return `<span class="cell-inner" style="color:var(--muted)">—</span>`
+  if (col === 'complexity') {
+    const cls = 'cx-' + String(val).replace(' ', '-')
+    return `<span class="badge ${cls}">${val}</span>`
+  }
+  if (typeof val === 'boolean' || val === true || val === false) {
+    return val
+      ? `<span class="bool-true">✓</span>`
+      : `<span class="bool-false">✗</span>`
+  }
+  if (col.startsWith('is_') || col.startsWith('has_') || col.startsWith('send_') ||
+      col.startsWith('allow_') || col.startsWith('restrict_') || col.startsWith('consent_')) {
+    return val === true || val === 'true' || val === 't'
+      ? `<span class="bool-true">✓</span>`
+      : val === false || val === 'false' || val === 'f'
+        ? `<span class="bool-false">✗</span>`
+        : `<span class="cell-inner">${val}</span>`
+  }
+  return `<span class="cell-inner" title="${String(val).replace(/"/g,'&quot;')}">${val}</span>`
+}
+
+// ── Boot ───────────────────────────────────────────────────────────
+rebuildHeader()
+renderRows()
+</script>
+</body>
+</html>

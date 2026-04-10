@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Engagement Data POC</title>
+  <style>
+    :root {
+      --bg: #0e0e11; --surface: #1a1a1f; --surface2: #222228; --border: #2e2e36;
+      --text: #e8e8ed; --muted: #6e6e7a;
+      --green: #32d74b; --amber: #ffd60a; --red: #ff453a; --blue: #4a9eff; --purple: #bf5af2;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 40px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 10; }
+    .topbar-title { font-size: 14px; font-weight: 600; color: var(--text); text-decoration: none; }
+
+    .page { max-width: 900px; margin: 0 auto; padding: 48px 40px 80px; }
+
+    .section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--blue); margin-bottom: 10px; }
+    h1 { font-size: 32px; font-weight: 800; letter-spacing: -1px; line-height: 1.2; margin-bottom: 14px; }
+    p { color: #c0c0cc; font-size: 15px; margin-bottom: 12px; }
+    p:last-child { margin-bottom: 0; }
+    .lead { font-size: 17px; color: var(--text); line-height: 1.7; }
+
+    /* Version cards */
+    .version-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .version-card.legacy { border-color: var(--border); }
+    .version-card.current { border-color: var(--green)33; }
+
+    .version-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      width: fit-content;
+    }
+    .legacy .version-badge { background: var(--muted)22; color: var(--muted); border: 1px solid var(--muted)33; }
+    .current .version-badge { background: var(--green)22; color: var(--green); border: 1px solid var(--green)44; }
+
+    .version-card h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; color: var(--text); margin: 0; }
+    .version-card p { font-size: 14px; color: #a8a8b8; line-height: 1.6; margin: 0; }
+
+    .version-note {
+      background: var(--amber)11;
+      border: 1px solid var(--amber)44;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--amber);
+      line-height: 1.5;
+    }
+
+    .version-links { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+
+    .version-link {
+      display: inline-block;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: opacity 0.15s;
+      border: 1px solid transparent;
+    }
+    .version-link:hover { opacity: 0.8; text-decoration: none; }
+
+    .legacy .version-link:not(.secondary) { background: var(--muted)22; color: var(--text); border-color: var(--muted)44; }
+    .legacy .version-link.secondary { background: transparent; color: var(--muted); border-color: var(--border); }
+    .legacy .version-link.secondary:hover { color: var(--text); border-color: var(--text)44; }
+
+    .current .version-link:not(.secondary) { background: var(--green)22; color: var(--green); border-color: var(--green)44; }
+    .current .version-link.secondary { background: transparent; color: var(--muted); border-color: var(--border); }
+    .current .version-link.secondary:hover { color: var(--text); border-color: var(--text)44; }
+
+    @media (max-width: 640px) {
+      .page { padding: 32px 20px 60px; }
+      .topbar { padding: 12px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar-title">Engagement Data POC</span>
+</div>
+
+<div class="page">
+  <div class="section-label">Engagement Data</div>
+  <h1>Architecture POC</h1>
+  <p class="lead">Two versions exploring how to load, stream, and render large engagement datasets efficiently.</p>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:32px">
+
+    <!-- V1 card -->
+    <div class="version-card legacy">
+      <div class="version-badge">V1 — Legacy Reference</div>
+      <h2>SQLite + N+1 vs Flat Query</h2>
+      <p>Demonstrates the N+1 waterfall problem and solves it with a single flat JOIN query, virtual scroll rendering, and WebSocket live updates. Uses SQLite with seeded data.</p>
+      <div class="version-note">&#9888;&#65039; Demo runs locally only — requires SQLite binary. Not deployed to Railway.</div>
+      <div class="version-links">
+        <a href="engagement.html" class="version-link">Live Demo (local)</a>
+        <a href="architecture.html" class="version-link secondary">Architecture Docs</a>
+      </div>
+    </div>
+
+    <!-- V2 card -->
+    <div class="version-card current">
+      <div class="version-badge">V2 — Current</div>
+      <h2>PostgreSQL + Progressive Loading</h2>
+      <p>Builds on V1 with a real PostgreSQL database, cursor-based pagination, server-side filtering, dynamic column selection, and a collapsible tree view. 100,000 rows seeded from your production schema.</p>
+      <div class="version-links">
+        <a href="engagements.html" class="version-link">Live Demo</a>
+        <a href="architecture-v2.html" class="version-link secondary">Architecture Docs</a>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

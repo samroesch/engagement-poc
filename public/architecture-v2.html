@@ -439,6 +439,96 @@ ORDER BY due_date ASC, id ASC LIMIT 1000</span>
 
   <!-- ── Section 9: Comparison Table ──────────────────────────────── -->
   <div class="section">
+    <div class="section-label">Indexes</div>
+    <h2>Index Strategy</h2>
+    <p class="lead">With ~1M rows, the right indexes are the difference between a 5ms index scan and an 800ms heap sort. All indexes below are implemented in the POC and should be mirrored in production.</p>
+
+    <div class="subsection" style="margin-top:28px">
+      <div class="subsection-label">Single-column indexes — equality filters</div>
+      <p>Cover WHERE clauses on individual filter fields. PostgreSQL can combine these with bitmap index scans when multiple filters are active.</p>
+      <div class="flow">
+        <div class="flow-title">Implemented</div>
+        <code style="font-size:13px;color:var(--green);line-height:2">
+          idx_eng_status_id &nbsp;·&nbsp; idx_eng_office &nbsp;·&nbsp; idx_eng_tax_year<br>
+          idx_eng_svc_type &nbsp;·&nbsp; idx_eng_filing_type &nbsp;·&nbsp; idx_eng_is_active<br>
+          idx_eng_client_id &nbsp;·&nbsp; idx_eng_entity_id &nbsp;·&nbsp; idx_eng_entity_name<br>
+          idx_eng_msd (milestone_start_date)
+        </code>
+      </div>
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">Composite indexes — filter + sort + cursor</div>
+      <p>The most important indexes for this query pattern. When a user filters by <code>status_id</code> and sorts by <code>due_date</code>, PostgreSQL can satisfy the entire query — WHERE, ORDER BY, and the keyset cursor tiebreak — from a single index scan without touching the heap.</p>
+      <div class="flow good">
+        <div class="flow-title">Pattern: (filter_col, due_date NULLS LAST, id)</div>
+        <code style="font-size:13px;color:var(--green);line-height:2">
+          idx_eng_due_date_id &nbsp;&nbsp;→&nbsp; (due_date NULLS LAST, id)<br>
+          idx_eng_status_due &nbsp;&nbsp;→&nbsp; (status_id, due_date NULLS LAST, id)<br>
+          idx_eng_office_due &nbsp;&nbsp;→&nbsp; (office, due_date NULLS LAST, id)<br>
+          idx_eng_svctype_due &nbsp;→&nbsp; (service_type, due_date NULLS LAST, id)<br>
+          idx_eng_taxyear_due &nbsp;→&nbsp; (tax_year, due_date NULLS LAST, id)<br>
+          idx_eng_filing_due &nbsp;&nbsp;→&nbsp; (filing_type, due_date NULLS LAST, id)
+        </code>
+      </div>
+      <p>The trailing <code>id</code> column is required for the keyset cursor tiebreak — without it, rows with identical <code>due_date</code> values produce ambiguous pagination.</p>
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">Index-defeating patterns to avoid</div>
+      <table class="compare-table">
+        <thead><tr><th>Pattern</th><th>Why it breaks the index</th></tr></thead>
+        <tbody>
+          <tr><td><code>WHERE YEAR(due_date) = 2024</code></td><td>Function on indexed column — full scan</td></tr>
+          <tr><td><code>WHERE office LIKE '%Vancouver%'</code></td><td>Leading wildcard — can't use B-tree</td></tr>
+          <tr><td><code>WHERE status_id != 3</code></td><td>Negation — index rarely helps</td></tr>
+          <tr><td><code>ORDER BY LOWER(client_name)</code></td><td>Function on sort column — can't use index order</td></tr>
+          <tr><td>Filter on column A, sort on column B with no composite index</td><td>PostgreSQL must sort filtered heap rows post-scan</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Query Pattern</div>
+    <h2>Stored Procedures vs Dynamic SQL</h2>
+    <p class="lead">The production team uses stored procedures. For this query pattern, stored procedures do not add value — and introduce maintenance overhead.</p>
+
+    <div class="subsection" style="margin-top:28px">
+      <div class="subsection-label">Why stored procedures don't help here</div>
+      <p>The primary benefit of stored procedures is <strong>cached execution plans</strong>. That benefit disappears when the procedure uses dynamic SQL internally — which it must, because column lists, filter sets, sort columns, and cursor conditions all vary per request.</p>
+      <div class="flow bad">
+        <div class="flow-title">Stored proc with dynamic SQL — no plan cache benefit</div>
+        <code style="font-size:13px;color:var(--amber);line-height:1.8">
+          CREATE PROCEDURE get_engagements(...) AS<br>
+          &nbsp;&nbsp;EXECUTE 'SELECT ' + @cols + ' FROM engagement WHERE ' + @where + ' ORDER BY ' + @sort<br>
+          -- Same dynamic SQL, now wrapped in a procedure layer<br>
+          -- Plan cache: none (EXECUTE always recompiles)
+        </code>
+      </div>
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">When stored procedures are worth it</div>
+      <table class="compare-table">
+        <thead><tr><th>Scenario</th><th>Worth it?</th></tr></thead>
+        <tbody>
+          <tr><td>Static query called millions of times</td><td class="val-good">Yes — plan cache benefit is real</td></tr>
+          <tr><td>Multi-step atomic transaction</td><td class="val-good">Yes — single round trip, atomicity</td></tr>
+          <tr><td>Shared business logic across multiple apps</td><td class="val-good">Yes — single source of truth</td></tr>
+          <tr><td>Security isolation (no direct table access)</td><td class="val-good">Yes — EXECUTE permission only</td></tr>
+          <tr><td>Dynamic columns + filters + cursor pagination</td><td class="val-bad">No — dynamic SQL negates plan caching</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">Azure SQL note</div>
+      <p>SQL Server's plan cache is more sensitive to query variation than PostgreSQL. On Azure SQL, wrapping dynamic SQL in <code>sp_executesql</code> with proper parameterisation does improve plan reuse compared to raw ad-hoc strings — but this is an argument for <em>parameterised dynamic SQL</em>, not for stored procedure wrappers specifically.</p>
+    </div>
+  </div>
+
+  <div class="section">
     <div class="section-label">Summary</div>
     <h2>Full Comparison: V1 vs V2 vs Production</h2>
     <table class="compare-table">
@@ -496,7 +586,7 @@ ORDER BY due_date ASC, id ASC LIMIT 1000</span>
         <tr>
           <td class="metric">Scale tested</td>
           <td>100K rows (synthetic)</td>
-          <td class="val-good">100K rows (production schema)</td>
+          <td class="val-good">987K rows (production schema, Railway hobby)</td>
           <td>Production data, unknown row count</td>
         </tr>
       </tbody>

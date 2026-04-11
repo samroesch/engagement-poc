@@ -371,7 +371,7 @@ const COLS = [
 ]
 const NUM_COLS   = COLS.length
 const MAX_BATCH  = Math.floor(65535 / NUM_COLS)  // PostgreSQL hard limit: 65535 params per query
-const TARGET     = parseInt(process.env.SEED_TARGET) || 100000
+const TARGET     = parseInt(process.env.SEED_TARGET) || 250000
 const BATCH_SIZE = Math.min(parseInt(process.env.SEED_BATCH_SIZE) || 200, MAX_BATCH)
 
 async function seed() {
@@ -400,7 +400,7 @@ async function seed() {
 
     console.log(`Seeding ${TARGET.toLocaleString()} engagement rows…`)
     let inserted = 0
-    const CHECKPOINT_INTERVAL = 50000  // flush WAL every 50k rows to avoid disk fill
+    const CHECKPOINT_INTERVAL = 10000  // flush WAL every 10k rows to avoid disk fill
     while (inserted < TARGET) {
       const size = Math.min(BATCH_SIZE, TARGET - inserted)
       const rows = Array.from({ length: size }, makeRow)

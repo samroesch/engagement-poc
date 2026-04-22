@@ -174,6 +174,26 @@
     .row-tier2:hover { filter: brightness(1.1); }
     .cell-chevron { width: 28px; flex-shrink: 0; color: var(--muted); }
     .cell-count { color: var(--muted); font-size: 12px; }
+
+    /* Milestone facet bar */
+    .milestone-bar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 8px 16px; border-bottom: 1px solid var(--border);
+      flex-shrink: 0; overflow-x: auto;
+    }
+    .milestone-bar::-webkit-scrollbar { height: 3px; }
+    .milestone-bar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .milestone-bar-label { font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; margin-right: 2px; }
+    .milestone-pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 20px; font-size: 11px;
+      border: 1px solid var(--border); background: var(--surface2);
+      color: var(--muted); cursor: pointer; white-space: nowrap;
+      transition: all 0.12s; flex-shrink: 0;
+    }
+    .milestone-pill:hover { color: var(--text); border-color: var(--text)44; }
+    .milestone-pill.active { background: var(--blue)22; border-color: var(--blue)66; color: var(--blue); font-weight: 600; }
+    .milestone-pill-count { font-size: 10px; font-weight: 700; opacity: 0.7; }
   </style>
 </head>
 <body>
@@ -227,6 +247,9 @@
       <button class="group-btn" onclick="expandAll()">Expand All</button>
       <button class="group-btn" onclick="collapseAll()">Collapse All</button>
     </div>
+
+    <!-- Milestone facet bar -->
+    <div class="milestone-bar" id="milestoneBar" style="display:none"></div>
 
     <!-- Filter bar -->
     <div class="filter-bar">
@@ -390,10 +413,12 @@ let treeData = []   // built from filteredRows by buildTree()
 
 // Filter state
 let fOffice = '', fTaxYear = '', fServiceType = '', fStatus = '', fComplexity = '', fFilingType = ''
+let milestoneFilter = null   // active milestone pill selection
 
 // ── Init ───────────────────────────────────────────────────────────
 buildColPicker()
 fetchTotal()
+fetchGroups()
 fetchBatch()
 
 // Populate office dropdown after first batch
@@ -492,12 +517,13 @@ async function fetchBatch() {
   if (sortCol) { params.set('sort', sortCol); params.set('dir', sortDir) }
   if (cursor) params.set('after', cursor)
 
-  if (fOffice)      params.set('office', fOffice)
-  if (fTaxYear)     params.set('tax_year', fTaxYear)
-  if (fServiceType) params.set('service_type', fServiceType)
-  if (fStatus)      params.set('status_id', fStatus)
-  if (fComplexity)  params.set('complexity', fComplexity)
-  if (fFilingType)  params.set('filing_type', fFilingType)
+  if (fOffice)         params.set('office', fOffice)
+  if (fTaxYear)        params.set('tax_year', fTaxYear)
+  if (fServiceType)    params.set('service_type', fServiceType)
+  if (fStatus)         params.set('status_id', fStatus)
+  if (fComplexity)     params.set('complexity', fComplexity)
+  if (fFilingType)     params.set('filing_type', fFilingType)
+  if (milestoneFilter) params.set('client_milestone', milestoneFilter)
 
   try {
     const res = await fetch(`/api/engagements/stream?${params}`)
@@ -553,6 +579,7 @@ function applyFilters(fromUser = false) {
     document.getElementById('viewport').scrollTop = 0
     rebuildHeader()
     renderRows()
+    fetchGroups()
     fetchBatch()
     return
   }
@@ -592,6 +619,44 @@ function setSort(col) {
   rebuildHeader()
   renderRows()
   fetchBatch()
+}
+
+// ── Milestone facet bar ────────────────────────────────────────────
+async function fetchGroups() {
+  const params = new URLSearchParams({ groupBy: 'client_milestone' })
+  if (fOffice)      params.set('office', fOffice)
+  if (fTaxYear)     params.set('tax_year', fTaxYear)
+  if (fServiceType) params.set('service_type', fServiceType)
+  if (fStatus)      params.set('status_id', fStatus)
+  if (fComplexity)  params.set('complexity', fComplexity)
+  if (fFilingType)  params.set('filing_type', fFilingType)
+  try {
+    const res = await fetch(`/api/engagements/groups?${params}`)
+    const groups = await res.json()
+    renderMilestoneBar(groups.filter(g => g.value !== null))
+  } catch (e) { console.error('Groups fetch error:', e) }
+}
+
+function renderMilestoneBar(groups) {
+  const bar = document.getElementById('milestoneBar')
+  if (!groups.length) { bar.style.display = 'none'; return }
+  bar.style.display = 'flex'
+  bar.innerHTML = `<span class="milestone-bar-label">Milestone</span>` +
+    groups.map(g => {
+      const active = milestoneFilter === g.value
+      return `<div class="milestone-pill${active ? ' active' : ''}" onclick="toggleMilestone(${JSON.stringify(g.value)})">
+        <span>${escHtml(g.value)}</span>
+        <span class="milestone-pill-count">${g.count.toLocaleString()}</span>
+      </div>`
+    }).join('')
+}
+
+function toggleMilestone(value) {
+  milestoneFilter = milestoneFilter === value ? null : value
+  allRows = []; filteredRows = []; visibleRows = []
+  cursor = null; hasMore = true
+  seenTier1.clear(); seenTier2.clear()
+  rebuildHeader(); renderRows(); fetchGroups(); fetchBatch()
 }
 
 // ── Grouping ───────────────────────────────────────────────────────

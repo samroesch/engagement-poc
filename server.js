@@ -453,6 +453,23 @@ const SORT_COLS = {
   status_id: 'status_id', complexity: 'complexity', estimated_hours: 'estimated_hours'
 }
 
+// ── Shared filter builder ─────────────────────────────────────────
+function buildFilters(query) {
+  const conditions = [], params = []
+  const push = (val, cond) => { params.push(val); conditions.push(cond.replace('?', `$${params.length}`)) }
+  if (query.office)            push(query.office,            `office = ?`)
+  if (query.tax_year)          push(query.tax_year,          `tax_year = ?`)
+  if (query.service_type)      push(query.service_type,      `service_type = ?`)
+  if (query.status_id)         push(query.status_id,         `status_id = ?`)
+  if (query.complexity)        push(query.complexity,        `complexity = ?`)
+  if (query.filing_type)       push(query.filing_type,       `filing_type = ?`)
+  if (query.entity_type)       push(query.entity_type,       `entity_type = ?`)
+  if (query.client_milestone)  push(query.client_milestone,  `client_milestone = ?`)
+  if (query.is_active !== undefined && query.is_active !== '')
+    push(query.is_active === 'true', `is_active = ?`)
+  return { conditions, params }
+}
+
 // ── API: count ────────────────────────────────────────────────────
 app.get('/api/engagements/count', async (req, res) => {
   try {
@@ -491,41 +508,7 @@ app.get('/api/engagements/stream', async (req, res) => {
   }
 
   // Build filter conditions and params
-  const filterConditions = []
-  const filterParams = []
-
-  if (req.query.office) {
-    filterParams.push(req.query.office)
-    filterConditions.push(`office = $${filterParams.length}`)
-  }
-  if (req.query.tax_year) {
-    filterParams.push(req.query.tax_year)
-    filterConditions.push(`tax_year = $${filterParams.length}`)
-  }
-  if (req.query.service_type) {
-    filterParams.push(req.query.service_type)
-    filterConditions.push(`service_type = $${filterParams.length}`)
-  }
-  if (req.query.status_id) {
-    filterParams.push(req.query.status_id)
-    filterConditions.push(`status_id = $${filterParams.length}`)
-  }
-  if (req.query.complexity) {
-    filterParams.push(req.query.complexity)
-    filterConditions.push(`complexity = $${filterParams.length}`)
-  }
-  if (req.query.filing_type) {
-    filterParams.push(req.query.filing_type)
-    filterConditions.push(`filing_type = $${filterParams.length}`)
-  }
-  if (req.query.entity_type) {
-    filterParams.push(req.query.entity_type)
-    filterConditions.push(`entity_type = $${filterParams.length}`)
-  }
-  if (req.query.is_active !== undefined && req.query.is_active !== '') {
-    filterParams.push(req.query.is_active === 'true')
-    filterConditions.push(`is_active = $${filterParams.length}`)
-  }
+  const { conditions: filterConditions, params: filterParams } = buildFilters(req.query)
 
   const filterPrefix = filterConditions.length > 0
     ? filterConditions.join(' AND ') + ' AND '
@@ -580,5 +563,27 @@ app.get('/api/engagements/stream', async (req, res) => {
   } finally {
     await client.end().catch(() => {})
     res.end()
+  }
+})
+
+// ── API: groups (server-side aggregation for facet bar) ───────────
+const ALLOWED_GROUP_COLS = new Set([
+  'client_milestone', 'internal_milestone', 'status_id', 'service_type',
+  'office', 'complexity', 'filing_type', 'entity_type', 'tax_year'
+])
+
+app.get('/api/engagements/groups', async (req, res) => {
+  const groupBy = req.query.groupBy
+  if (!ALLOWED_GROUP_COLS.has(groupBy)) {
+    return res.status(400).json({ error: `Invalid groupBy: ${groupBy}` })
+  }
+  try {
+    const { conditions, params } = buildFilters(req.query)
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const sql = `SELECT ${groupBy} AS value, COUNT(*)::int AS count FROM engagement ${where} GROUP BY ${groupBy} ORDER BY count DESC`
+    const result = await pool.query(sql, params)
+    res.json(result.rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
   }
 })

@@ -464,7 +464,8 @@ function buildFilters(query) {
   if (query.complexity)        push(query.complexity,        `complexity = ?`)
   if (query.filing_type)       push(query.filing_type,       `filing_type = ?`)
   if (query.entity_type)       push(query.entity_type,       `entity_type = ?`)
-  if (query.client_milestone)  push(query.client_milestone,  `client_milestone = ?`)
+  if (query.client_milestone)    push(query.client_milestone,    `client_milestone = ?`)
+  if (query.internal_milestone)  push(query.internal_milestone,  `internal_milestone = ?`)
   if (query.is_active !== undefined && query.is_active !== '')
     push(query.is_active === 'true', `is_active = ?`)
   return { conditions, params }

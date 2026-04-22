@@ -241,7 +241,7 @@
         <option value="entity_name">Entity</option>
         <option value="engagement_name">Engagement</option>
         <option value="due_date">Due Date</option>
-        <option value="client_milestone">Milestone</option>
+        <option value="internal_milestone">Milestone</option>
       </select>
       <div style="width:1px;height:18px;background:var(--border);margin:0 4px"></div>
       <button class="group-btn" onclick="expandAll()">Expand All</button>
@@ -523,7 +523,7 @@ async function fetchBatch() {
   if (fStatus)         params.set('status_id', fStatus)
   if (fComplexity)     params.set('complexity', fComplexity)
   if (fFilingType)     params.set('filing_type', fFilingType)
-  if (milestoneFilter) params.set('client_milestone', milestoneFilter)
+  if (milestoneFilter) params.set('internal_milestone', milestoneFilter)
 
   try {
     const res = await fetch(`/api/engagements/stream?${params}`)
@@ -623,7 +623,7 @@ function setSort(col) {
 
 // ── Milestone facet bar ────────────────────────────────────────────
 async function fetchGroups() {
-  const params = new URLSearchParams({ groupBy: 'client_milestone' })
+  const params = new URLSearchParams({ groupBy: 'internal_milestone' })
   if (fOffice)      params.set('office', fOffice)
   if (fTaxYear)     params.set('tax_year', fTaxYear)
   if (fServiceType) params.set('service_type', fServiceType)

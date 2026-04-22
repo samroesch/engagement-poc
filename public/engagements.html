@@ -75,10 +75,9 @@
       font-family: inherit; padding: 4px 8px; outline: none; cursor: pointer;
     }
     .filter-divider { width: 1px; height: 18px; background: var(--border); margin: 0 2px; flex-shrink: 0; }
-    .group-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .group-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
     .group-btn { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: 12px; font-family: inherit; padding: 4px 12px; cursor: pointer; }
     .group-btn:hover { color: var(--text); border-color: var(--text)44; }
-    .group-btn.active { background: var(--blue)22; border-color: var(--blue)66; color: var(--blue); font-weight: 600; }
 
     /* Status bar */
     .status-bar {
@@ -169,10 +168,10 @@
     }
 
     /* Tree row styles */
-    .row-client { background: var(--surface2); cursor: pointer; font-weight: 700; }
-    .row-client:hover { background: var(--surface); }
-    .row-entity { background: var(--surface); cursor: pointer; font-weight: 600; }
-    .row-entity:hover { filter: brightness(1.1); }
+    .row-tier1 { background: var(--surface2); cursor: pointer; font-weight: 700; }
+    .row-tier1:hover { background: var(--surface); }
+    .row-tier2 { background: var(--surface); cursor: pointer; font-weight: 600; }
+    .row-tier2:hover { filter: brightness(1.1); }
     .cell-chevron { width: 28px; flex-shrink: 0; color: var(--muted); }
     .cell-count { color: var(--muted); font-size: 12px; }
   </style>
@@ -209,11 +208,21 @@
 
     <!-- Group mode toolbar -->
     <div class="group-toolbar">
-      <span class="filter-label">View</span>
-      <button class="group-btn active" id="gbtn-flat"   onclick="setGroupMode('flat')">Flat</button>
-      <button class="group-btn"        id="gbtn-client" onclick="setGroupMode('client')">Client</button>
-      <button class="group-btn"        id="gbtn-entity" onclick="setGroupMode('entity')">Entity</button>
-      <button class="group-btn"        id="gbtn-both"   onclick="setGroupMode('both')">Client + Entity</button>
+      <span class="filter-label">Group by</span>
+      <select class="filter-select" id="gTier1" onchange="onGroupChange()">
+        <option value="">None</option>
+        <option value="client_name">Client Group</option>
+        <option value="entity_name">Entity</option>
+        <option value="engagement_name">Engagement</option>
+      </select>
+      <span class="filter-label">then by</span>
+      <select class="filter-select" id="gTier2" onchange="onGroupChange()">
+        <option value="">None</option>
+        <option value="entity_name">Entity</option>
+        <option value="engagement_name">Engagement</option>
+        <option value="due_date">Due Date</option>
+        <option value="client_milestone">Milestone</option>
+      </select>
       <div style="width:1px;height:18px;background:var(--border);margin:0 4px"></div>
       <button class="group-btn" onclick="expandAll()">Expand All</button>
       <button class="group-btn" onclick="collapseAll()">Collapse All</button>
@@ -297,6 +306,7 @@ const ROW_H = 40
 const OVERSCAN = 8
 const LOAD_SIZE = 1000
 const VISIBLE_TARGET = 1000
+const MIN_GROUPS = 30
 
 // All columns in schema order
 const ALL_COLUMNS = [
@@ -347,11 +357,21 @@ const COL_WIDTHS = {
 }
 function colWidth(c) { return COL_WIDTHS[c] || 120 }
 
+// ── Grouping config ────────────────────────────────────────────────
+// Maps field name → display label and value extractor
+const GROUP_FIELDS = {
+  client_name:     { label: 'Client Group', val: r => r.client_name      || '(No Client)' },
+  entity_name:     { label: 'Entity',       val: r => r.entity_name      || '(No Entity)' },
+  engagement_name: { label: 'Engagement',   val: r => r.engagement_name  || '(No Engagement)' },
+  due_date:        { label: 'Due Date',      val: r => r.due_date         || '(No Due Date)' },
+  client_milestone:{ label: 'Milestone',    val: r => r.client_milestone  || '(No Milestone)' },
+}
+
 // ── State ──────────────────────────────────────────────────────────
 let selectedCols = new Set(DEFAULT_COLS)
-let allRows = []          // All loaded rows from server
-let filteredRows = []     // After client-side filters
-let visibleRows = []      // For virtual scroll (includes tree header rows)
+let allRows = []
+let filteredRows = []
+let visibleRows = []
 let cursor = null
 let hasMore = false
 let totalCount = null
@@ -359,13 +379,14 @@ let isFetching = false
 let sortCol = null
 let sortDir = 'asc'
 
-// Tree state
-let groupMode = 'flat'
-let expandedClients = new Set()
-let expandedEntities = new Set()
-let treeClients = []      // [{id, name, entities: [{id, name, rows:[]}]}]
-let seenClients  = new Set()   // clients ever loaded — only auto-expand on first appearance
-let seenEntities = new Set()   // entities ever loaded — same
+// Grouping state
+let tier1Group = null   // field name or null
+let tier2Group = null   // field name or null
+let expandedTier1 = new Set()   // keyed by tier1 group value string
+let expandedTier2 = new Set()   // keyed by "tier1val::tier2val"
+let seenTier1 = new Set()
+let seenTier2 = new Set()
+let treeData = []   // built from filteredRows by buildTree()
 
 // Filter state
 let fOffice = '', fTaxYear = '', fServiceType = '', fStatus = '', fComplexity = '', fFilingType = ''
@@ -375,7 +396,7 @@ buildColPicker()
 fetchTotal()
 fetchBatch()
 
-// Populate office dropdown (will fill after first batch)
+// Populate office dropdown after first batch
 function populateOfficeDropdown() {
   const offices = [...new Set(allRows.map(r => r.office).filter(Boolean))].sort()
   const sel = document.getElementById('fOffice')
@@ -414,7 +435,7 @@ function selectAllCols() {
 
 function clearAllCols() {
   ALL_COLUMNS.forEach(c => {
-    if (c === 'id') return  // keep id
+    if (c === 'id') return
     selectedCols.delete(c)
     const chk = document.getElementById(`chk-${c}`)
     if (chk) chk.checked = false
@@ -435,13 +456,9 @@ function resetCols() {
 }
 
 function onColumnsChanged() {
-  // Reset and refetch with server-side filters
-  allRows = []
-  filteredRows = []
-  visibleRows = []
-  cursor = null
-  hasMore = true
-  seenClients.clear(); seenEntities.clear()
+  allRows = []; filteredRows = []; visibleRows = []
+  cursor = null; hasMore = true
+  seenTier1.clear(); seenTier2.clear()
   rebuildHeader()
   renderRows()
   fetchBatch()
@@ -465,17 +482,16 @@ async function fetchBatch() {
   document.getElementById('loadMoreBtn').disabled = true
 
   const cols = ['id', ...selectedCols].filter((v, i, a) => a.indexOf(v) === i)
-  // Always include columns needed for tree building
-  if (!cols.includes('client_id')) cols.push('client_id')
-  if (!cols.includes('client_name')) cols.push('client_name')
-  if (!cols.includes('entity_id')) cols.push('entity_id')
-  if (!cols.includes('entity_name')) cols.push('entity_name')
+
+  // Always fetch columns required for active grouping
+  for (const field of [tier1Group, tier2Group]) {
+    if (field && !cols.includes(field)) cols.push(field)
+  }
 
   const params = new URLSearchParams({ columns: cols.join(','), limit: LOAD_SIZE })
   if (sortCol) { params.set('sort', sortCol); params.set('dir', sortDir) }
   if (cursor) params.set('after', cursor)
 
-  // Pass active server-side filters
   if (fOffice)      params.set('office', fOffice)
   if (fTaxYear)     params.set('tax_year', fTaxYear)
   if (fServiceType) params.set('service_type', fServiceType)
@@ -486,15 +502,12 @@ async function fetchBatch() {
   try {
     const res = await fetch(`/api/engagements/stream?${params}`)
     const text = await res.text()
-    // SSE response: parse all data: lines
     const events = text.split('\n').filter(l => l.startsWith('data: '))
     for (const line of events) {
       try {
         const payload = JSON.parse(line.slice(6))
         if (payload.error) { console.error('Stream error:', payload.error); continue }
-        if (payload.rows && payload.rows.length > 0) {
-          allRows = allRows.concat(payload.rows)
-        }
+        if (payload.rows && payload.rows.length > 0) allRows = allRows.concat(payload.rows)
         if (payload.hasMore !== undefined) hasMore = payload.hasMore
         if (payload.cursor !== undefined) cursor = payload.cursor
       } catch (_) {}
@@ -517,14 +530,10 @@ function loadMore() {
   fetchBatch()
 }
 
-const MIN_GROUPS = 30  // minimum top-level client groups before stopping in tree mode
-
 function checkThreshold() {
   if (!hasMore || isFetching) return
   if (filteredRows.length >= VISIBLE_TARGET) return
-  // In tree modes ensure enough top-level groups are loaded so collapse doesn't
-  // leave the viewport near-empty and re-trigger fetching on every render
-  if (groupMode !== 'flat' && treeClients.length >= MIN_GROUPS) return
+  if (tier1Group && treeData.length >= MIN_GROUPS) return
   fetchBatch()
 }
 
@@ -538,13 +547,9 @@ function applyFilters(fromUser = false) {
   fFilingType  = document.getElementById('fFilingType').value
 
   if (fromUser) {
-    // User changed a filter — reset everything and refetch from server
-    allRows = []
-    filteredRows = []
-    visibleRows = []
-    cursor = null
-    hasMore = true
-    seenClients.clear(); seenEntities.clear()
+    allRows = []; filteredRows = []; visibleRows = []
+    cursor = null; hasMore = true
+    seenTier1.clear(); seenTier2.clear()
     document.getElementById('viewport').scrollTop = 0
     rebuildHeader()
     renderRows()
@@ -552,14 +557,13 @@ function applyFilters(fromUser = false) {
     return
   }
 
-  // Called after batch load — filter in memory only
   filteredRows = allRows.filter(r => {
-    if (fOffice      && r.office       !== fOffice)                   return false
+    if (fOffice      && r.office           !== fOffice)                return false
     if (fTaxYear     && String(r.tax_year) !== fTaxYear)              return false
-    if (fServiceType && r.service_type  !== fServiceType)             return false
+    if (fServiceType && r.service_type     !== fServiceType)          return false
     if (fStatus      && String(r.status_id) !== fStatus)              return false
-    if (fComplexity  && r.complexity    !== fComplexity)              return false
-    if (fFilingType  && r.filing_type   !== fFilingType)              return false
+    if (fComplexity  && r.complexity       !== fComplexity)           return false
+    if (fFilingType  && r.filing_type      !== fFilingType)           return false
     return true
   })
 
@@ -573,183 +577,156 @@ function applyFilters(fromUser = false) {
 function updateStats() {
   document.getElementById('filteredCount').textContent = filteredRows.length.toLocaleString()
   document.getElementById('loadedCount').textContent   = allRows.length.toLocaleString()
-  if (totalCount !== null) {
-    document.getElementById('totalCount').textContent  = totalCount.toLocaleString()
-  }
+  if (totalCount !== null) document.getElementById('totalCount').textContent = totalCount.toLocaleString()
   document.getElementById('loadMoreBtn').disabled = !hasMore || isFetching
 }
 
 // ── Sorting ────────────────────────────────────────────────────────
 function setSort(col) {
   if (!SORT_COLS.has(col)) return
-  if (sortCol === col) {
-    sortDir = sortDir === 'asc' ? 'desc' : 'asc'
-  } else {
-    sortCol = col
-    sortDir = 'asc'
-  }
-  // Reset and refetch
-  allRows = []
-  filteredRows = []
-  visibleRows = []
-  cursor = null
-  hasMore = true
-  seenClients.clear(); seenEntities.clear()
+  if (sortCol === col) sortDir = sortDir === 'asc' ? 'desc' : 'asc'
+  else { sortCol = col; sortDir = 'asc' }
+  allRows = []; filteredRows = []; visibleRows = []
+  cursor = null; hasMore = true
+  seenTier1.clear(); seenTier2.clear()
   rebuildHeader()
   renderRows()
   fetchBatch()
 }
 
-// ── Tree building ──────────────────────────────────────────────────
-function buildTree(rows) {
-  const clientMap = new Map()
+// ── Grouping ───────────────────────────────────────────────────────
+function onGroupChange() {
+  tier1Group = document.getElementById('gTier1').value || null
+  tier2Group = document.getElementById('gTier2').value || null
 
-  for (const r of rows) {
-    const cId   = r.client_id
-    const cName = r.client_name || `Client ${cId}`
-    const eId   = r.entity_id
-    const eName = r.entity_name || `Entity ${eId}`
+  // Fresh expand state for new grouping
+  expandedTier1.clear(); expandedTier2.clear()
+  seenTier1.clear(); seenTier2.clear()
 
-    if (!clientMap.has(cId)) {
-      clientMap.set(cId, { id: cId, name: cName, entityMap: new Map() })
-    }
-    const client = clientMap.get(cId)
-
-    if (!client.entityMap.has(eId)) {
-      client.entityMap.set(eId, { id: eId, name: eName, rows: [] })
-    }
-    client.entityMap.get(eId).rows.push(r)
+  // Refetch if we don't have the required columns yet
+  const needsCols = [tier1Group, tier2Group].filter(col => col && !allRows[0]?.[col] && allRows.length > 0)
+  if (needsCols.length > 0) {
+    allRows = []; filteredRows = []; visibleRows = []
+    cursor = null; hasMore = true
+    rebuildHeader(); renderRows(); fetchBatch()
+    return
   }
 
-  treeClients = Array.from(clientMap.values())
-    .map(c => ({
-      id: c.id,
-      name: c.name,
-      entities: Array.from(c.entityMap.values())
-        .sort((a, b) => a.name.localeCompare(b.name))
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name))
+  rebuildVisibleRows()
+  renderRows()
+}
 
-  // Auto-expand only nodes seen for the first time
-  for (const c of treeClients) {
-    if (!seenClients.has(c.id)) {
-      seenClients.add(c.id)
-      expandedClients.add(c.id)
+// Build a two-level tree from filteredRows using tier1Group / tier2Group field names.
+// Called every time filters change — builds from filteredRows directly so no re-filter needed later.
+function buildTree(rows) {
+  treeData = []
+  if (!tier1Group) return
+
+  const t1Fn = GROUP_FIELDS[tier1Group].val
+  const t2Fn = tier2Group ? GROUP_FIELDS[tier2Group].val : null
+  const tier1Map = new Map()
+
+  for (const r of rows) {
+    const k1 = t1Fn(r)
+    if (!tier1Map.has(k1)) tier1Map.set(k1, { key: k1, tier2Map: new Map(), directRows: [] })
+    const node = tier1Map.get(k1)
+    if (t2Fn) {
+      const k2 = t2Fn(r)
+      if (!node.tier2Map.has(k2)) node.tier2Map.set(k2, [])
+      node.tier2Map.get(k2).push(r)
+    } else {
+      node.directRows.push(r)
     }
-    for (const e of c.entities) {
-      if (!seenEntities.has(e.id)) {
-        seenEntities.add(e.id)
-        expandedEntities.add(e.id)
+  }
+
+  treeData = Array.from(tier1Map.entries())
+    .sort(([a], [b]) => String(a).localeCompare(String(b)))
+    .map(([k1, node]) => {
+      let children = null
+      let count = 0
+      if (t2Fn) {
+        children = Array.from(node.tier2Map.entries())
+          .sort(([a], [b]) => String(a).localeCompare(String(b)))
+          .map(([k2, rowsArr]) => {
+            count += rowsArr.length
+            return { key: `${k1}::${k2}`, label: k2, rows: rowsArr }
+          })
+      } else {
+        count = node.directRows.length
+      }
+      return { key: k1, label: k1, children, directRows: node.directRows, count }
+    })
+
+  // Auto-expand nodes appearing for the first time
+  for (const t1 of treeData) {
+    if (!seenTier1.has(t1.key)) { seenTier1.add(t1.key); expandedTier1.add(t1.key) }
+    if (t1.children) {
+      for (const t2 of t1.children) {
+        if (!seenTier2.has(t2.key)) { seenTier2.add(t2.key); expandedTier2.add(t2.key) }
       }
     }
   }
 }
 
 function buildVisibleRows() {
-  if (groupMode === 'flat') {
-    return filteredRows.map(r => ({ kind: 'row', data: r }))
-  }
-
-  // Build a filtered rows set for quick lookup by entity/client
-  const filteredSet = new Set(filteredRows)
+  if (!tier1Group) return filteredRows.map(r => ({ kind: 'row', data: r }))
 
   const result = []
+  for (const t1 of treeData) {
+    result.push({ kind: 'tier1', key: t1.key, label: t1.label, count: t1.count })
+    if (!expandedTier1.has(t1.key)) continue
 
-  if (groupMode === 'client') {
-    for (const client of treeClients) {
-      // Collect filtered rows for this client
-      const clientRows = filteredRows.filter(r => r.client_id === client.id)
-      if (clientRows.length === 0) continue
-      result.push({ kind: 'client', client, count: clientRows.length })
-      if (expandedClients.has(client.id)) {
-        for (const r of clientRows) {
-          result.push({ kind: 'row', data: r })
-        }
+    if (t1.children) {
+      for (const t2 of t1.children) {
+        result.push({ kind: 'tier2', key: t2.key, label: t2.label, count: t2.rows.length })
+        if (!expandedTier2.has(t2.key)) continue
+        for (const r of t2.rows) result.push({ kind: 'row', data: r })
       }
-    }
-  } else if (groupMode === 'entity') {
-    for (const client of treeClients) {
-      for (const entity of client.entities) {
-        const entityRows = entity.rows.filter(r => filteredSet.has(r))
-        if (entityRows.length === 0) continue
-        result.push({ kind: 'entity', entity, client, count: entityRows.length })
-        if (expandedEntities.has(entity.id)) {
-          for (const r of entityRows) {
-            result.push({ kind: 'row', data: r })
-          }
-        }
-      }
-    }
-  } else if (groupMode === 'both') {
-    for (const client of treeClients) {
-      const clientRows = filteredRows.filter(r => r.client_id === client.id)
-      if (clientRows.length === 0) continue
-      result.push({ kind: 'client', client, count: clientRows.length })
-      if (expandedClients.has(client.id)) {
-        for (const entity of client.entities) {
-          const entityRows = entity.rows.filter(r => filteredSet.has(r))
-          if (entityRows.length === 0) continue
-          result.push({ kind: 'entity', entity, client, count: entityRows.length })
-          if (expandedEntities.has(entity.id)) {
-            for (const r of entityRows) {
-              result.push({ kind: 'row', data: r })
-            }
-          }
-        }
-      }
+    } else {
+      for (const r of t1.directRows) result.push({ kind: 'row', data: r })
     }
   }
-
   return result
 }
 
 function rebuildVisibleRows() {
-  buildTree(allRows)
+  buildTree(filteredRows)
   visibleRows = buildVisibleRows()
 }
 
-// ── Tree toggle functions ──────────────────────────────────────────
-function toggleClient(id) {
-  if (expandedClients.has(id)) expandedClients.delete(id)
-  else expandedClients.add(id)
+// ── Tree toggle ────────────────────────────────────────────────────
+function toggleTier1(key) {
+  if (expandedTier1.has(key)) expandedTier1.delete(key)
+  else expandedTier1.add(key)
   visibleRows = buildVisibleRows()
   renderRows()
 }
 
-function toggleEntity(id) {
-  if (expandedEntities.has(id)) expandedEntities.delete(id)
-  else expandedEntities.add(id)
+function toggleTier2(key) {
+  if (expandedTier2.has(key)) expandedTier2.delete(key)
+  else expandedTier2.add(key)
   visibleRows = buildVisibleRows()
   renderRows()
 }
 
 function expandAll() {
-  for (const c of treeClients) {
-    expandedClients.add(c.id)
-    for (const e of c.entities) expandedEntities.add(e.id)
+  for (const t1 of treeData) {
+    expandedTier1.add(t1.key)
+    if (t1.children) for (const t2 of t1.children) expandedTier2.add(t2.key)
   }
   visibleRows = buildVisibleRows()
   renderRows()
 }
 
 function collapseAll() {
-  expandedClients.clear()
-  expandedEntities.clear()
-  visibleRows = buildVisibleRows()
-  renderRows()
-}
-
-function setGroupMode(mode) {
-  groupMode = mode
-  document.querySelectorAll('.group-btn').forEach(b => b.classList.remove('active'))
-  document.getElementById('gbtn-' + mode)?.classList.add('active')
+  expandedTier1.clear()
+  expandedTier2.clear()
   visibleRows = buildVisibleRows()
   renderRows()
 }
 
 // ── Header ─────────────────────────────────────────────────────────
 function getVisibleCols() {
-  // id always included but not necessarily shown (needed for cursor)
   const vis = ALL_COLUMNS.filter(c => selectedCols.has(c))
   if (!vis.includes('id')) vis.unshift('id')
   return vis
@@ -758,12 +735,11 @@ function getVisibleCols() {
 function rebuildHeader() {
   const visCols = getVisibleCols()
   const gridCols = visCols.map(c => `${colWidth(c)}px`).join(' ')
-
   const head = document.getElementById('tableHead')
   head.style.gridTemplateColumns = gridCols
   head.innerHTML = visCols.map(c => {
     const isSorted = sortCol === c
-    const canSort = SORT_COLS.has(c)
+    const canSort  = SORT_COLS.has(c)
     const arrow = isSorted ? (sortDir === 'asc' ? ' ↑' : ' ↓') : (canSort ? ' ↕' : '')
     return `<div class="th${isSorted ? ' sorted' : ''}" ${canSort ? `onclick="setSort('${c}')"` : ''}>${c.replace(/_/g,' ')}<span class="sort-arrow">${arrow}</span></div>`
   }).join('')
@@ -773,14 +749,14 @@ function rebuildHeader() {
 let lastRenderKey = ''
 
 function renderRows() {
-  const visCols = getVisibleCols()
-  const gridCols = visCols.map(c => `${colWidth(c)}px`).join(' ')
+  const visCols   = getVisibleCols()
+  const gridCols  = visCols.map(c => `${colWidth(c)}px`).join(' ')
   const viewport  = document.getElementById('viewport')
   const spacer    = document.getElementById('spacer')
   const container = document.getElementById('rowContainer')
   const emptyMsg  = document.getElementById('emptyMsg')
 
-  const totalH = visibleRows.length * ROW_H
+  const totalH    = visibleRows.length * ROW_H
   spacer.style.height = totalH + 'px'
 
   const viewH    = viewport.clientHeight
@@ -788,15 +764,12 @@ function renderRows() {
   const startIdx  = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN)
   const endIdx    = Math.min(visibleRows.length, Math.ceil((scrollTop + viewH) / ROW_H) + OVERSCAN)
 
-  // Trigger load-more when scrolled within 250 rows of bottom — but only when
-  // content overflows the viewport (prevents firing when tree is collapsed and
-  // all headers fit on screen without scrolling)
   if (hasMore && !isFetching && visibleRows.length > 0) {
     const contentH = visibleRows.length * ROW_H
     if (contentH > viewH && scrollTop + viewH >= contentH - 250 * ROW_H) fetchBatch()
   }
 
-  const renderKey = `${startIdx}-${endIdx}-${visCols.join(',')}-${visibleRows.length}-${groupMode}`
+  const renderKey = `${startIdx}-${endIdx}-${visCols.join(',')}-${visibleRows.length}-${tier1Group}-${tier2Group}`
   if (renderKey === lastRenderKey) return
   lastRenderKey = renderKey
 
@@ -810,43 +783,43 @@ function renderRows() {
     return
   }
   emptyMsg.style.display = 'none'
-
   rebuildHeader()
 
+  const activeGroupCols = new Set([tier1Group, tier2Group].filter(Boolean))
+  const inTreeMode = tier1Group !== null
+
   const slice = visibleRows.slice(startIdx, endIdx)
-
   const html = slice.map((vr, i) => {
-    const absIdx = startIdx + i
+    const absIdx   = startIdx + i
     const translateY = absIdx * ROW_H
+    const keyAttr  = JSON.stringify(vr.key ?? '')
 
-    if (vr.kind === 'client') {
-      const expanded = expandedClients.has(vr.client.id)
-      return `<div class="row row-client" style="transform:translateY(${translateY}px);position:absolute;left:0;right:0;display:flex;" onclick="toggleClient(${vr.client.id})">
+    if (vr.kind === 'tier1') {
+      const expanded = expandedTier1.has(vr.key)
+      return `<div class="row row-tier1" style="transform:translateY(${translateY}px);position:absolute;left:0;right:0;display:flex;" onclick="toggleTier1(${keyAttr})">
         <div class="cell cell-chevron">${expanded ? '▾' : '▸'}</div>
-        <div class="cell cell-name" style="flex:1">${escHtml(vr.client.name)}</div>
+        <div class="cell" style="flex:1;font-weight:700">${escHtml(vr.label)}</div>
         <div class="cell cell-count">${vr.count} engagements</div>
       </div>`
     }
 
-    if (vr.kind === 'entity') {
-      const expanded = expandedEntities.has(vr.entity.id)
-      return `<div class="row row-entity" style="transform:translateY(${translateY}px);position:absolute;left:0;right:0;display:flex;" onclick="toggleEntity(${vr.entity.id})">
+    if (vr.kind === 'tier2') {
+      const expanded = expandedTier2.has(vr.key)
+      return `<div class="row row-tier2" style="transform:translateY(${translateY}px);position:absolute;left:0;right:0;display:flex;" onclick="toggleTier2(${keyAttr})">
         <div class="cell cell-chevron" style="padding-left:20px">${expanded ? '▾' : '▸'}</div>
-        <div class="cell cell-name" style="flex:1">${escHtml(vr.entity.name)}</div>
+        <div class="cell" style="flex:1;font-weight:600">${escHtml(vr.label)}</div>
         <div class="cell cell-count">${vr.count} engagements</div>
       </div>`
     }
 
     // kind === 'row'
     const row = vr.data
-    const inTreeMode = groupMode !== 'flat'
+    const indent = tier2Group ? 36 : tier1Group ? 20 : 0
     const cells = visCols.map(c => {
-      // In tree modes, indent data rows slightly and skip tree grouping columns to reduce redundancy
-      if (inTreeMode && (c === 'client_name' || c === 'entity_name')) {
-        return `<div class="cell" style="padding-left:${groupMode === 'both' ? '36' : '20'}px"><span class="cell-inner" style="color:var(--muted)">—</span></div>`
+      if (inTreeMode && activeGroupCols.has(c)) {
+        return `<div class="cell" style="padding-left:${indent}px"><span class="cell-inner" style="color:var(--muted)">—</span></div>`
       }
-      const val = row[c]
-      return `<div class="cell">${renderCell(c, val)}</div>`
+      return `<div class="cell">${renderCell(c, row[c])}</div>`
     }).join('')
     return `<div class="row" style="grid-template-columns:${gridCols};transform:translateY(${translateY}px);position:absolute;left:0;right:0">${cells}</div>`
   }).join('')
@@ -864,10 +837,8 @@ function renderCell(col, val) {
     const cls = 'cx-' + String(val).replace(' ', '-')
     return `<span class="badge ${cls}">${val}</span>`
   }
-  if (typeof val === 'boolean' || val === true || val === false) {
-    return val
-      ? `<span class="bool-true">✓</span>`
-      : `<span class="bool-false">✗</span>`
+  if (typeof val === 'boolean') {
+    return val ? `<span class="bool-true">✓</span>` : `<span class="bool-false">✗</span>`
   }
   if (col.startsWith('is_') || col.startsWith('has_') || col.startsWith('send_') ||
       col.startsWith('allow_') || col.startsWith('restrict_') || col.startsWith('consent_')) {

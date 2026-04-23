@@ -644,7 +644,7 @@ function renderMilestoneBar(groups) {
   bar.innerHTML = `<span class="milestone-bar-label">Milestone</span>` +
     groups.map(g => {
       const active = milestoneFilter === g.value
-      return `<div class="milestone-pill${active ? ' active' : ''}" onclick="toggleMilestone(${JSON.stringify(g.value)})">
+      return `<div class="milestone-pill${active ? ' active' : ''}" onclick="toggleMilestone(${escHtml(JSON.stringify(g.value))})">
         <span>${escHtml(g.value)}</span>
         <span class="milestone-pill-count">${g.count.toLocaleString()}</span>
       </div>`

@@ -594,5 +594,112 @@ ORDER BY due_date ASC, id ASC LIMIT 1000</span>
   </div>
 
 </div>
+
+  <!-- ── Release Notes ────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-label">Release Notes — 2026-04-23</div>
+    <h2>Dynamic Grouping + Server-Side Facet Bar</h2>
+    <p class="lead">Two features added in response to team feedback on POC stability and usability.</p>
+
+    <div class="subsection" style="margin-top:28px">
+      <div class="subsection-label">1 — Dynamic Two-Tier Grouping</div>
+      <p>The original tree view had four hardcoded modes (Flat, Client, Entity, Client + Entity). These are replaced by two dropdowns that let users compose any two-level hierarchy from a defined set of fields.</p>
+
+      <table class="compare-table">
+        <thead><tr><th>Tier</th><th>Available fields</th></tr></thead>
+        <tbody>
+          <tr><td class="metric">Tier 1 (primary group)</td><td>Client Group, Entity, Engagement</td></tr>
+          <tr><td class="metric">Tier 2 (sub-group)</td><td>Entity, Engagement, Due Date, Milestone</td></tr>
+        </tbody>
+      </table>
+
+      <p style="margin-top:16px">The grouping logic is fully generic. <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--amber)">buildTree(rows)</code> accepts any two field names and builds the two-level map in a single pass. <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--amber)">buildVisibleRows()</code> walks the resulting tree to produce the virtual scroll list, inserting tier1/tier2 header rows at group boundaries. Expand/collapse state is tracked in two Sets keyed by group value — O(1) toggle.</p>
+
+      <div class="flow good">
+        <div class="flow-title">How grouping columns are fetched</div>
+        <div class="layer">
+          <div class="layer-icon browser">&#128187;</div>
+          <div class="layer-body">
+            <div class="layer-name">Column injection</div>
+            <div class="layer-detail">On every batch fetch, the active tier1 and tier2 field names are appended to the <code>?columns=</code> parameter regardless of what the user has selected in the column picker. Grouping always has the data it needs — no column visibility requirement.</div>
+          </div>
+        </div>
+        <div class="flow-arrow">&#8595;</div>
+        <div class="layer">
+          <div class="layer-icon browser">&#128187;</div>
+          <div class="layer-body">
+            <div class="layer-name">Group change</div>
+            <div class="layer-detail">When the user changes a grouping dropdown, expand state is cleared and the tree is rebuilt from already-loaded rows. If the new grouping field isn't yet in the loaded data (not previously fetched), the client store is cleared and a fresh batch fetch is triggered.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <strong>Known limitation:</strong> Groups build from client-loaded rows only. If only 1,000 of 987K rows are loaded, group headers and counts reflect only those 1,000. This is acceptable for exploration but not for aggregate reporting. See the facet bar below for the server-side alternative.
+      </div>
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">2 — Server-Side Milestone Facet Bar</div>
+      <p>Addresses the team feedback that frontend grouping produces unstable counts as data loads in batches. The facet bar runs a dedicated <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--amber)">GROUP BY</code> query server-side against the full dataset, returning accurate counts immediately — independent of how many rows have been paginated to the client.</p>
+
+      <div class="code-block">
+<span class="cmt">-- GET /api/engagements/groups?groupBy=internal_milestone&office=Toronto</span>
+<span class="kw">SELECT</span> internal_milestone <span class="kw">AS</span> value, <span class="kw">COUNT</span>(*)::int <span class="kw">AS</span> count
+<span class="kw">FROM</span> engagement
+<span class="kw">WHERE</span> office = <span class="str">$1</span>
+<span class="kw">GROUP BY</span> internal_milestone
+<span class="kw">ORDER BY</span> count <span class="kw">DESC</span>
+<span class="cmt">-- Returns: [{"value":"In Progress","count":41823}, ...]</span>
+      </div>
+
+      <div class="flow good">
+        <div class="flow-title">Facet bar interaction flow</div>
+        <div class="layer">
+          <div class="layer-icon server">&#9881;&#65039;</div>
+          <div class="layer-body">
+            <div class="layer-name">On page load / filter change</div>
+            <div class="layer-detail">Client calls <code>/api/engagements/groups?groupBy=internal_milestone</code> with any active filters. Server runs a single aggregate query and returns all milestone buckets with accurate counts from the full dataset.</div>
+          </div>
+        </div>
+        <div class="flow-arrow">&#8595;</div>
+        <div class="layer">
+          <div class="layer-icon browser">&#128187;</div>
+          <div class="layer-body">
+            <div class="layer-name">Facet bar renders</div>
+            <div class="layer-detail">Milestone pills appear above the filter bar. Each pill shows the milestone name and count. Null values (no milestone assigned) are excluded from the bar.</div>
+          </div>
+        </div>
+        <div class="flow-arrow">&#8595;</div>
+        <div class="layer">
+          <div class="layer-icon browser">&#128187;</div>
+          <div class="layer-body">
+            <div class="layer-name">User clicks a pill</div>
+            <div class="layer-detail">Client resets the row store and refetches with <code>internal_milestone=$value</code> added to the WHERE clause. The clicked pill highlights as active. Clicking again deselects and removes the filter. The facet bar also refetches its counts to reflect the new filter state.</div>
+          </div>
+        </div>
+      </div>
+
+      <table class="compare-table" style="margin-top:16px">
+        <thead><tr><th>Property</th><th>Client-side grouping</th><th>Facet bar (server-side)</th></tr></thead>
+        <tbody>
+          <tr><td class="metric">Count accuracy</td><td class="val-bad">Partial — reflects loaded rows only</td><td class="val-good">Exact — full dataset aggregate</td></tr>
+          <tr><td class="metric">Stability</td><td class="val-bad">Changes with each batch load</td><td class="val-good">Stable — one query, one result</td></tr>
+          <tr><td class="metric">Query cost</td><td class="val-good">None (client CPU only)</td><td class="val-warn">One lightweight aggregate query per filter change</td></tr>
+          <tr><td class="metric">Click-to-filter</td><td class="val-bad">No</td><td class="val-good">Yes — sets server-side WHERE clause</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <strong>Shared filter builder:</strong> Both <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">/api/engagements/stream</code> and <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">/api/engagements/groups</code> use the same <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">buildFilters(query)</code> helper on the server. This guarantees that the counts in the facet bar always reflect the same filter state as the row stream — they can't drift out of sync.
+      </div>
+
+      <div class="callout">
+        <strong>Generalised endpoint:</strong> <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">/api/engagements/groups</code> accepts any column in a server-side whitelist (<code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">ALLOWED_GROUP_COLS</code>) as the <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">groupBy</code> parameter. The UI currently uses it for <code style="font-family:'SF Mono','Cascadia Code',monospace;font-size:12px">internal_milestone</code>, but it could power additional facet bars (by office, service type, status, etc.) with no server changes.
+      </div>
+    </div>
+  </div>
+
+</div>
 </body>
 </html>

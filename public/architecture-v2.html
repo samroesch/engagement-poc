@@ -593,8 +593,6 @@ ORDER BY due_date ASC, id ASC LIMIT 1000</span>
     </table>
   </div>
 
-</div>
-
   <!-- ── Release Notes ────────────────────────────────────────────── -->
   <div class="section">
     <div class="section-label">Release Notes — 2026-04-23</div>
@@ -635,7 +633,7 @@ ORDER BY due_date ASC, id ASC LIMIT 1000</span>
       </div>
 
       <div class="callout warn">
-        <strong>Known limitation:</strong> Groups build from client-loaded rows only. If only 1,000 of 987K rows are loaded, group headers and counts reflect only those 1,000. This is acceptable for exploration but not for aggregate reporting. See the facet bar below for the server-side alternative.
+        <strong>Known limitation — incomplete groups:</strong> Rows are fetched in <code>id</code> order, not pre-sorted by group. A client with 200 engagements spread across the database may have only 12 visible after the first 1,000 rows load — the other 188 arrive in later batches. Both the group header count and the children list are incomplete until all matching rows are loaded. This affects group counts AND the rows shown under each group header. For accurate counts, use the server-side facet bar. For complete child lists, the correct solution is a two-phase approach: fetch group keys server-side first, then lazy-load rows per group on expand.
       </div>
     </div>
 
